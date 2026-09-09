@@ -16,7 +16,7 @@ def build():
         "--clean", "--noconfirm", str(spec),
     ], check=True)
 
-    exe = ROOT / "dist" / "Kimi图片分类工具.exe"
+    exe = ROOT / "dist" / "DeepSeek图片分类工具.exe"
     if exe.exists():
         size = exe.stat().st_size / (1024 * 1024)
         print(f"\nBuild OK: {exe} ({size:.1f} MB)")

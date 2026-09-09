@@ -96,8 +96,8 @@ class RunTab(QWidget):
         self._failed_items: list[tuple[str, str]] = []  # (filename, error)
         self._start_time = None
 
-    def set_config(self, service, api_key, model, src, out, categories, global_prompt, category_keywords, rpm):
-        self._config = (service, api_key, model, src, out, categories, global_prompt, category_keywords, rpm)
+    def set_config(self, api_key, src, out, categories, global_prompt, category_keywords, rpm):
+        self._config = (api_key, src, out, categories, global_prompt, category_keywords, rpm)
         self._output_dir = out
 
     # ── 分类控制 ──
@@ -105,7 +105,7 @@ class RunTab(QWidget):
         if self._classifier and self._classifier.isRunning():
             QMessageBox.warning(self, "提示", "分类正在进行中，请先等待完成或取消")
             return
-        service, api_key, model, src, out, categories, global_prompt, category_keywords, rpm = self._config
+        api_key, src, out, categories, global_prompt, category_keywords, rpm = self._config
         if not api_key:
             QMessageBox.warning(self, "错误", "请先在配置页输入 API 密钥")
             return
@@ -122,7 +122,11 @@ class RunTab(QWidget):
         self._failed = 0
         self._failed_items = []
 
-        self._classifier = Classifier(service, api_key, model, src, out, categories, global_prompt, category_keywords, rpm)
+        from app.providers import get_provider
+        self._classifier = Classifier(
+            "deepseek", api_key, get_provider("deepseek")["default_model"],
+            src, out, categories, global_prompt, category_keywords, rpm,
+        )
         self._classifier.signals.scan_done.connect(self._on_scan)
         self._classifier.signals.progress.connect(self._on_progress)
         self._classifier.signals.finished.connect(self._on_finished)

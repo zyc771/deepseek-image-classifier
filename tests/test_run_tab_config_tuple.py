@@ -7,13 +7,11 @@ def test_set_config_unpack_order():
     app = QApplication.instance() or QApplication([])
     tab = RunTab()
     tab.set_config(
-        "deepseek", "key", "model-x", "/src", "/out",
+        "key", "/src", "/out",
         ["科技"], "prompt {categories}", {"科技": "芯片"}, 42,
     )
-    service, api_key, model, src, out, cats, prompt, kws, rpm = tab._config
-    assert service == "deepseek"
+    api_key, src, out, cats, prompt, kws, rpm = tab._config
     assert api_key == "key"
-    assert model == "model-x"
     assert src == "/src"
     assert out == "/out"
     assert cats == ["科技"]

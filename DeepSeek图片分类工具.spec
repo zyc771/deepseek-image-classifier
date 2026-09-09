@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Kimi图片分类工具',
+    name='DeepSeek图片分类工具',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

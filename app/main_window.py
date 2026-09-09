@@ -2,12 +2,13 @@
 from PySide6.QtWidgets import QMainWindow, QTabWidget, QStatusBar, QLabel
 from app.config_tab import ConfigTab
 from app.run_tab import RunTab
+from app.providers import get_provider
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Kimi 图片分类工具")
+        self.setWindowTitle("DeepSeek图片分类工具")
         self.resize(900, 700)
 
         # 状态栏
@@ -31,9 +32,7 @@ class MainWindow(QMainWindow):
             # 切换到运行页时，从配置页同步配置
             self._config_tab.save_settings()
             cfg = (
-                self._config_tab.get_service(),
                 self._config_tab.get_api_key(),
-                self._config_tab.get_model(),
                 self._config_tab.get_source_dir(),
                 self._config_tab.get_output_dir(),
                 self._config_tab.get_categories(),
@@ -42,7 +41,9 @@ class MainWindow(QMainWindow):
                 self._config_tab.get_rpm(),
             )
             self._run_tab.set_config(*cfg)
-            self._status_label.setText(f"就绪 | 模型: {cfg[2]} | 分类: {len(cfg[5])}类")
+            self._status_label.setText(
+                f"就绪 | 模型: {get_provider('deepseek')['default_model']} | 分类: {len(cfg[3])}类"
+            )
 
     def closeEvent(self, event):
         self._config_tab.save_settings()

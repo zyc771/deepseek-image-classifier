@@ -1,14 +1,16 @@
 """配置页 — API密钥、文件夹、分类、提示词、频率、单张测试"""
-import base64
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QLineEdit, QPushButton, QPlainTextEdit, QSlider, QSpinBox,
-    QFileDialog, QMessageBox, QScrollArea, QFormLayout, QComboBox,
+    QFileDialog, QMessageBox, QScrollArea, QFormLayout,
 )
 from PySide6.QtCore import Qt, QSettings, QThread
-from app.providers import default_service, get_provider, provider_choices
+from app.providers import get_provider
 from app.secure import decrypt_secret, encrypt_secret
+
+SERVICE = "deepseek"
+LEGACY_ORG = "KimiClassifier"
 
 DEFAULT_CATEGORIES = "科技;日常;学习;体育;军事;动漫;历史;地理;政治;游戏;经济"
 DEFAULT_KEYWORDS = {
@@ -30,7 +32,6 @@ DEFAULT_GLOBAL_PROMPT = (
     "分类标准：\n{category_definitions}\n\n"
     "回复格式：分类名||置信度(0到1之间的数字)||关键词1,关键词2,关键词3"
 )
-DEFAULT_MODEL = "moonshot-v1-8k-vision-preview"
 DEFAULT_RPM = 30
 
 
@@ -41,9 +42,11 @@ def _parse_categories(text: str) -> list[str]:
 
 
 class ConfigTab(QWidget):
-    def __init__(self, parent=None, settings: QSettings = None):
+    def __init__(self, parent=None, settings: QSettings = None, legacy_settings: QSettings = None):
         super().__init__(parent)
-        self._settings = settings or QSettings("KimiClassifier", "Config")
+        self._settings = settings or QSettings("DeepSeekImageClassifier", "Config")
+        # legacy_settings 用于一次性迁移旧工具配置；None = 真实旧工具命名空间（注册表）
+        self._legacy_settings = legacy_settings
         self._kw_inputs: dict[str, QLineEdit] = {}
 
         scroll = QScrollArea()
@@ -52,24 +55,12 @@ class ConfigTab(QWidget):
         layout = QVBoxLayout(container)
         layout.setSpacing(8)
 
-        # ── API 服务商 ──
-        group_svc = QGroupBox("API 服务商")
-        gsvc = QHBoxLayout(group_svc)
-        gsvc.addWidget(QLabel("服务商:"))
-        self._service_combo = QComboBox()
-        for sid, label in provider_choices():
-            self._service_combo.addItem(label, sid)
-        self._service_combo.currentIndexChanged.connect(lambda _: self._on_service_changed())
-        gsvc.addWidget(self._service_combo)
-        gsvc.addStretch()
-        layout.addWidget(group_svc)
-
         # ── API密钥 ──
-        group_key = QGroupBox("API 密钥")
+        group_key = QGroupBox("API 密钥 (DeepSeek)")
         gk = QHBoxLayout(group_key)
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_input.setPlaceholderText("输入 Kimi API Key (sk-...开头)")
+        self._key_input.setPlaceholderText("输入 DeepSeek API Key (sk-...开头)")
         gk.addWidget(self._key_input)
         self._key_toggle = QPushButton("显示")
         self._key_toggle.setCheckable(True)
@@ -142,14 +133,9 @@ class ConfigTab(QWidget):
         gp.addWidget(btn_reset_prompt)
         layout.addWidget(group_prompt)
 
-        # ── 模型与频率 ──
-        group_model = QGroupBox("模型与频率")
+        # ── 请求频率 ──
+        group_model = QGroupBox("请求频率")
         gm = QVBoxLayout(group_model)
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("模型:"))
-        self._model_input = QLineEdit(DEFAULT_MODEL)
-        row3.addWidget(self._model_input)
-        gm.addLayout(row3)
         row4 = QHBoxLayout()
         row4.addWidget(QLabel("请求频率:"))
         self._rpm_slider = QSlider(Qt.Orientation.Horizontal)
@@ -192,33 +178,12 @@ class ConfigTab(QWidget):
         outer = QVBoxLayout(self)
         outer.addWidget(scroll)
 
-        self._current_service = default_service()
-        self._saved_keys: dict[str, str] = {}
-        self._saved_models: dict[str, str] = {}
         self._preview_thread = None
 
         self._load_settings()  # 此初始化顺序: 先建控件再读配置
         self._on_categories_changed(self._cat_input.text())
 
     # ── 公开接口 ──
-    def get_service(self) -> str:
-        return self._current_service
-
-    def _on_service_changed(self):
-        new = self._service_combo.currentData()
-        if new is None or new == self._current_service:
-            return
-        # 记住旧服务商的当前输入
-        if self._current_service:
-            self._saved_keys[self._current_service] = self._key_input.text().strip()
-            self._saved_models[self._current_service] = self._model_input.text().strip()
-        self._current_service = new
-        # 加载新服务商的记忆值（模型为空则用默认）
-        self._key_input.setText(self._saved_keys.get(new, ""))
-        self._model_input.setText(
-            self._saved_models.get(new, "")
-            or get_provider(new)["default_model"]
-        )
     def get_api_key(self) -> str:
         return self._key_input.text().strip()
 
@@ -242,9 +207,6 @@ class ConfigTab(QWidget):
     def get_global_prompt(self) -> str:
         return self._prompt_input.toPlainText()
 
-    def get_model(self) -> str:
-        return self._model_input.text().strip()
-
     def get_rpm(self) -> int:
         return self._rpm_spin.value()
 
@@ -261,21 +223,7 @@ class ConfigTab(QWidget):
     # ── 配置持久化 ──
     def save_settings(self):
         s = self._settings
-        # 更新内存态（当前服务商的输入即最新值）
-        self._saved_keys[self._current_service] = self._key_input.text().strip()
-        self._saved_models[self._current_service] = self._model_input.text().strip()
-
-        s.setValue("service", self._current_service)
-        s.remove("keys")
-        s.beginGroup("keys")
-        for sid, plain in self._saved_keys.items():
-            s.setValue(sid, encrypt_secret(plain))
-        s.endGroup()
-        s.remove("model")
-        s.beginGroup("model")
-        for sid, model in self._saved_models.items():
-            s.setValue(sid, model)
-        s.endGroup()
+        s.setValue("keys", encrypt_secret(self.get_api_key()))
 
         s.setValue("source_dir", self.get_source_dir())
         s.setValue("output_dir", self.get_output_dir())
@@ -293,48 +241,32 @@ class ConfigTab(QWidget):
     def _load_settings(self):
         s = self._settings
 
-        # ── Key 与模型：读取各服务商 + 旧格式迁移 ──
-        s.beginGroup("keys")
-        for sid in s.childKeys():
-            plain = decrypt_secret(s.value(sid, ""))
-            if plain:
-                self._saved_keys[sid] = plain
-        s.endGroup()
-        s.beginGroup("model")
-        for sid in s.childKeys():
-            m = s.value(sid, "")
-            if m:
-                self._saved_models[sid] = m
-        s.endGroup()
+        # ── Key：读取 + 兼容迁移 ──
+        plain = decrypt_secret(s.value("keys", "")) if s.value("keys", "") else ""
+        if not plain:
+            # 兼容1: 旧格式 api_key_b64 → keys
+            legacy_b64 = s.value("api_key_b64", "")
+            if legacy_b64:
+                try:
+                    import base64 as _b64
+                    plain = _b64.b64decode(legacy_b64).decode()
+                except Exception:
+                    plain = ""
+                if plain:
+                    s.setValue("keys", encrypt_secret(plain))
+                s.remove("api_key_b64")
+        if not plain:
+            # 兼容2: 一次性迁移旧工具（KimiClassifier/Config）的 DeepSeek Key
+            old = self._legacy_settings if self._legacy_settings is not None else QSettings(LEGACY_ORG, "Config")
+            old.beginGroup("keys")
+            old_blob = old.value(SERVICE, "")
+            old.endGroup()
+            if old_blob:
+                plain = decrypt_secret(old_blob)
+                if plain:
+                    s.setValue("keys", encrypt_secret(plain))
 
-        # 旧格式迁移：api_key_b64 → keys/kimi
-        legacy = s.value("api_key_b64", "")
-        if legacy:
-            try:
-                import base64 as _b64
-                plain = _b64.b64decode(legacy).decode()
-                if plain and "kimi" not in self._saved_keys:
-                    self._saved_keys["kimi"] = plain
-            except Exception:
-                pass
-            s.remove("api_key_b64")
-
-        # 当前服务商
-        self._current_service = s.value("service", default_service())
-        if self._current_service not in dict(provider_choices()):
-            self._current_service = default_service()
-
-        idx = self._service_combo.findData(self._current_service)
-        if idx >= 0:
-            self._service_combo.blockSignals(True)
-            self._service_combo.setCurrentIndex(idx)
-            self._service_combo.blockSignals(False)
-
-        self._key_input.setText(self._saved_keys.get(self._current_service, ""))
-        self._model_input.setText(
-            self._saved_models.get(self._current_service, "")
-            or get_provider(self._current_service)["default_model"]
-        )
+        self._key_input.setText(plain or "")
 
         # ── 其余配置 ──
         self._src_input.setText(s.value("source_dir", ""))
@@ -409,9 +341,9 @@ class ConfigTab(QWidget):
 
         from app.classifier import Classifier
         self._preview_clf = Classifier(
-            service=self.get_service(),
+            service=SERVICE,
             api_key=self.get_api_key(),
-            model=self.get_model(),
+            model=get_provider(SERVICE)["default_model"],
             source_dir=self.get_source_dir() or str(Path(path).parent),
             output_dir=self.get_output_dir() or str(Path(path).parent),
             categories=self.get_categories(),
