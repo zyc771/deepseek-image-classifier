@@ -31,7 +31,7 @@ class Classifier(QThread):
 
     def __init__(self, service: str, api_key: str, model: str, source_dir: str, output_dir: str,
                  categories: list[str], global_prompt: str, category_keywords: dict[str, str] = None,
-                 rpm: int = 30):
+                 rpm: int = 30, use_original: bool = False, low_conf_threshold: float = 0.6):
         super().__init__()
         self.signals = ClassifierSignals()
         self._service = service
@@ -43,6 +43,8 @@ class Classifier(QThread):
         self._global_prompt = global_prompt
         self._category_keywords = category_keywords or {}
         self._rpm = rpm
+        self._use_original = use_original
+        self._low_conf_threshold = low_conf_threshold
 
         self._paused = False
         self._cancelled = False
@@ -101,6 +103,9 @@ class Classifier(QThread):
 
             try:
                 category, confidence, keywords, raw, pt, ct = self._classify_one(img, prompt_text)
+                category = self._resolve_category(category, confidence)
+                if category == "待确认":
+                    self.signals.log.emit(f"[{idx+1}/{pending_count}] {img.name} → 低置信度({confidence:.2f}) 待确认")
                 results[category]["count"] += 1
                 results[category]["confidences"].append(confidence)
                 if keywords:
@@ -135,6 +140,7 @@ class Classifier(QThread):
             "pending": pending_count,
             "success": success,
             "failed": failed,
+            "pending_review": results["待确认"]["count"] if "待确认" in results else 0,
             "elapsed_seconds": elapsed,
             "total_prompt_tokens": total_prompt_tokens,
             "total_completion_tokens": total_completion_tokens,
@@ -142,7 +148,7 @@ class Classifier(QThread):
             "categories": {},
         }
 
-        for cat in self._categories + ["ERROR"]:
+        for cat in self._categories + ["待确认", "ERROR"]:
             if cat in results and results[cat]["count"] > 0:
                 r = results[cat]
                 confs = r["confidences"]
@@ -163,9 +169,13 @@ class Classifier(QThread):
 
     def _classify_one(self, filepath: Path, prompt_text: str) -> tuple:
         """单张分类，返回 (category, confidence, keywords, raw, prompt_tokens, completion_tokens)"""
-        with open(filepath, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode()
-        ext = filepath.suffix.lower().replace(".", "").replace("jpg", "jpeg")
+        if self._use_original:
+            with open(filepath, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+            ext = filepath.suffix.lower().replace(".", "").replace("jpg", "jpeg")
+        else:
+            from app.image_prep import prepare_image
+            ext, img_b64 = prepare_image(filepath)
         data_url = f"data:image/{ext};base64,{img_b64}"
 
         for attempt in range(3):
@@ -206,12 +216,24 @@ class Classifier(QThread):
                 time.sleep(2)
         raise Exception(f"3次重试均失败")
 
+    def _resolve_category(self, category: str, confidence: float) -> str:
+        """低置信度分流：低于阈值 → 待确认"""
+        if confidence < self._low_conf_threshold:
+            return "待确认"
+        return category
+
     def _parse_response(self, raw: str) -> tuple[str, float, list[str]]:
-        """解析 API 返回 -> (分类, 置信度, 关键词列表)"""
+        """解析 API 返回 -> (分类, 置信度, 关键词列表)
+
+        四级策略：JSON → || 分隔 → 模糊匹配 → 未整理（向后兼容旧格式）
+        """
         raw_clean = raw.strip()
 
-        # 尝试按 || 切分
-        if "||" in raw_clean:
+        parsed = self._try_parse_json(raw_clean)
+        if parsed is not None:
+            cat, conf, kws = parsed
+        elif "||" in raw_clean:
+            # 尝试按 || 切分
             parts = [p.strip() for p in raw_clean.split("||")]
             cat = parts[0] if len(parts) > 0 else "未整理"
             conf = 0.8
@@ -247,6 +269,38 @@ class Classifier(QThread):
         conf = max(0.0, min(1.0, conf))
 
         return cat, conf, kws
+
+    def _try_parse_json(self, raw_clean: str) -> tuple[str, float, list[str]] | None:
+        """提取 JSON 对象（允许模型包装文字/代码围栏）；失败返回 None"""
+        import json as _json
+
+        start = raw_clean.find("{")
+        end = raw_clean.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            obj = _json.loads(raw_clean[start:end + 1])
+        except Exception:
+            return None
+        if not isinstance(obj, dict):
+            return None
+
+        cat = str(obj.get("category", "")).strip()
+        conf = obj.get("confidence", 0.0)
+        try:
+            conf = float(conf)
+        except (TypeError, ValueError):
+            conf = 0.0
+
+        kws_obj = obj.get("keywords", []) or []
+        if isinstance(kws_obj, str):
+            kws = [k.strip() for k in kws_obj.replace(",", "，").replace("，", ",").split(",") if k.strip()]
+        elif isinstance(kws_obj, list):
+            kws = [str(k).strip() for k in kws_obj if str(k).strip()]
+        else:
+            kws = []
+
+        return cat or "未整理", conf, kws
 
     def preview(self, filepath: str):
         """单张预览测试（非线程）"""

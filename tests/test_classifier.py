@@ -42,6 +42,51 @@ class TestParseResponse:
         assert conf == 1.0
 
 
+class TestJsonParsing:
+    def test_json_standard(self, tmp_path):
+        clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out")
+        raw = '{"category": "动漫", "confidence": 0.91, "keywords": ["火影", "鸣人"]}'
+        cat, conf, kws = clf._parse_response(raw)
+        assert cat == "动漫"
+        assert conf == 0.91
+        assert kws == ["火影", "鸣人"]
+
+    def test_json_wrapped_in_text(self, tmp_path):
+        clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out")
+        raw = '这是一张图片。\n```json\n{"category": "科技", "confidence": 0.88, "keywords": ["芯片"]}\n```\n以上。'
+        cat, conf, kws = clf._parse_response(raw)
+        assert cat == "科技"
+        assert conf == 0.88
+
+    def test_json_invalid_falls_back_to_pipe(self, tmp_path):
+        clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out")
+        cat, conf, kws = clf._parse_response("动漫||0.85||火影,鸣人")
+        assert cat == "动漫"
+        assert conf == 0.85
+
+    def test_json_missing_fields(self, tmp_path):
+        clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out")
+        cat, conf, kws = clf._parse_response('{"confidence": 0.5}')
+        assert cat == "未整理"
+
+
+class TestLowConfidenceSplit:
+    def test_below_threshold_routes_to_pending(self, tmp_path):
+        clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out",
+                        low_conf_threshold=0.6)
+        assert clf._resolve_category("动漫", 0.59) == "待确认"
+
+    def test_at_or_above_threshold_keeps_category(self, tmp_path):
+        clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out",
+                        low_conf_threshold=0.6)
+        assert clf._resolve_category("动漫", 0.6) == "动漫"
+        assert clf._resolve_category("动漫", 0.95) == "动漫"
+
+    def test_default_threshold_is_0_6(self, tmp_path):
+        clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out")
+        assert clf._low_conf_threshold == 0.6
+
+
 class TestFilterDone:
     def test_same_name_size_mtime_skipped(self, tmp_path):
         src = tmp_path / "src"
