@@ -104,9 +104,6 @@ class ConfigTab(QWidget):
         self._cat_input.setPlaceholderText("科技;日常;学习;体育;...")
         self._cat_input.textChanged.connect(self._on_categories_changed)
         gc.addWidget(self._cat_input)
-        btn_reset_cat = QPushButton("恢复默认11类")
-        btn_reset_cat.clicked.connect(self._reset_categories)
-        gc.addWidget(btn_reset_cat)
         layout.addWidget(group_cat)
 
         # ── 各分类关键词 ──
@@ -305,9 +302,6 @@ class ConfigTab(QWidget):
                     input_widget.setText(DEFAULT_KEYWORDS[cat])
                 self._kw_layout.addRow(label, input_widget)
                 self._kw_inputs[cat] = input_widget
-
-    def _reset_categories(self):
-        self._cat_input.setText(DEFAULT_CATEGORIES)
 
     # ── 内部 ──
     def _toggle_key_visibility(self, checked):
