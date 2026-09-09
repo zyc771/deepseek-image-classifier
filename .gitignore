@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 构建产物（PyInstaller）
+build/
+dist/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+
+# 系统文件
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 本地敏感文件（永不提交）
+.env
+*.key
+*.pem
+token.txt
