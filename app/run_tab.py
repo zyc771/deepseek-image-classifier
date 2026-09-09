@@ -96,8 +96,10 @@ class RunTab(QWidget):
         self._failed_items: list[tuple[str, str]] = []  # (filename, error)
         self._start_time = None
 
-    def set_config(self, api_key, src, out, categories, global_prompt, category_keywords, rpm):
-        self._config = (api_key, src, out, categories, global_prompt, category_keywords, rpm)
+    def set_config(self, api_key, src, out, categories, global_prompt, category_keywords, rpm,
+                   use_original=False, low_conf=0.6):
+        self._config = (api_key, src, out, categories, global_prompt, category_keywords, rpm,
+                        use_original, low_conf)
         self._output_dir = out
 
     # ── 分类控制 ──
@@ -105,7 +107,8 @@ class RunTab(QWidget):
         if self._classifier and self._classifier.isRunning():
             QMessageBox.warning(self, "提示", "分类正在进行中，请先等待完成或取消")
             return
-        api_key, src, out, categories, global_prompt, category_keywords, rpm = self._config
+        (api_key, src, out, categories, global_prompt, category_keywords, rpm,
+         use_original, low_conf) = self._config
         if not api_key:
             QMessageBox.warning(self, "错误", "请先在配置页输入 API 密钥")
             return
@@ -126,6 +129,7 @@ class RunTab(QWidget):
         self._classifier = Classifier(
             "deepseek", api_key, get_provider("deepseek")["default_model"],
             src, out, categories, global_prompt, category_keywords, rpm,
+            use_original=use_original, low_conf_threshold=low_conf,
         )
         self._classifier.signals.scan_done.connect(self._on_scan)
         self._classifier.signals.progress.connect(self._on_progress)
@@ -200,6 +204,8 @@ class RunTab(QWidget):
             return
         self._progress_bar.setValue(self._progress_bar.maximum())
         self._add_log("\n=== 完成 ===")
+        if summary.get("pending_review"):
+            self._add_log(f"⚠ {summary['pending_review']} 张低置信度图片已放入『待确认』文件夹")
 
         cats = summary.get("categories", {})
         self._stats_table.setRowCount(len(cats))

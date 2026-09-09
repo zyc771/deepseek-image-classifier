@@ -47,6 +47,19 @@ def test_single_provider_ui(qapp, iso_settings):
     assert not hasattr(tab, "_model_input")
     # 隔离环境无任何旧配置，默认无 key
     assert tab.get_api_key() == ""
+    # 默认：原图模式关、阈值 0.6
+    assert tab.get_use_original() is False
+    assert tab.get_low_conf() == 0.6
+
+
+def test_processing_settings_persistence(qapp, iso_settings):
+    tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+    tab._original_check.setChecked(True)
+    tab._low_conf_spin.setValue(0.75)
+    tab.save_settings()
+    tab2 = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+    assert tab2.get_use_original() is True
+    assert tab2.get_low_conf() == 0.75
 
 
 def test_key_persistence_dpapi(qapp, iso_settings):

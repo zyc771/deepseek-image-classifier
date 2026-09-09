@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QLineEdit, QPushButton, QPlainTextEdit, QSlider, QSpinBox,
     QFileDialog, QMessageBox, QScrollArea, QFormLayout,
+    QCheckBox, QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt, QSettings, QThread
 from app.providers import get_provider
@@ -30,7 +31,11 @@ DEFAULT_GLOBAL_PROMPT = (
     "你是一个图片分类助手，所有图片本质上是搞笑/幽默内容。\n"
     "根据图片内容从以下分类中选择最匹配的一个。\n\n"
     "分类标准：\n{category_definitions}\n\n"
-    "回复格式：分类名||置信度(0到1之间的数字)||关键词1,关键词2,关键词3"
+    "判定优先级：画面主体内容 > 背景环境 > 文字信息。\n"
+    "置信度要求：如果图片内容含糊、信息不足、多类难以取舍，请给 0.6 以下的低分；"
+    "只有确信匹配时才给 0.85 以上的高分。\n\n"
+    "输出格式（仅输出 JSON，不要输出任何解释或代码块标记）：\n"
+    '{"category": "分类名", "confidence": 0到1之间的数字, "keywords": ["关键词1", "关键词2", "关键词3"]}'
 )
 DEFAULT_RPM = 30
 
@@ -130,6 +135,27 @@ class ConfigTab(QWidget):
         gp.addWidget(btn_reset_prompt)
         layout.addWidget(group_prompt)
 
+        # ── 图像处理与筛选 ──
+        group_img = QGroupBox("图像处理与筛选")
+        gi = QVBoxLayout(group_img)
+        self._original_check = QCheckBox(
+            "原图模式（跳过缩图/压缩，原图直传：更慢更贵，仅在需要极致细节时开启）"
+        )
+        gi.addWidget(self._original_check)
+        row6 = QHBoxLayout()
+        row6.addWidget(QLabel("低置信度阈值:"))
+        self._low_conf_spin = QDoubleSpinBox()
+        self._low_conf_spin.setRange(0.5, 0.9)
+        self._low_conf_spin.setSingleStep(0.05)
+        self._low_conf_spin.setDecimals(2)
+        self._low_conf_spin.setValue(0.6)
+        row6.addWidget(self._low_conf_spin)
+        self._low_conf_hint = QLabel("低于该值归入『待确认』文件夹")
+        row6.addWidget(self._low_conf_hint)
+        row6.addStretch()
+        gi.addLayout(row6)
+        layout.addWidget(group_img)
+
         # ── 请求频率 ──
         group_model = QGroupBox("请求频率")
         gm = QVBoxLayout(group_model)
@@ -207,6 +233,12 @@ class ConfigTab(QWidget):
     def get_rpm(self) -> int:
         return self._rpm_spin.value()
 
+    def get_use_original(self) -> bool:
+        return self._original_check.isChecked()
+
+    def get_low_conf(self) -> float:
+        return self._low_conf_spin.value()
+
     def set_preview_result(self, category, confidence, keywords, raw, pt, ct, elapsed):
         kw_str = ", ".join(keywords) if keywords else "无"
         text = (
@@ -227,6 +259,8 @@ class ConfigTab(QWidget):
         s.setValue("categories_raw", self._cat_input.text())
         s.setValue("global_prompt", self.get_global_prompt())
         s.setValue("rpm", self.get_rpm())
+        s.setValue("use_original", self.get_use_original())
+        s.setValue("low_conf_threshold", self.get_low_conf())
         # 保存每类关键词
         s.remove("kw")
         s.beginGroup("kw")
@@ -273,6 +307,8 @@ class ConfigTab(QWidget):
         rpm = int(s.value("rpm", DEFAULT_RPM))
         self._rpm_slider.setValue(rpm)
         self._rpm_spin.setValue(rpm)
+        self._original_check.setChecked(bool(s.value("use_original", False)))
+        self._low_conf_spin.setValue(float(s.value("low_conf_threshold", 0.6)))
         self._on_categories_changed(self._cat_input.text())
         s.beginGroup("kw")
         for cat in self._kw_inputs:
@@ -344,6 +380,8 @@ class ConfigTab(QWidget):
             global_prompt=self.get_global_prompt(),
             category_keywords=self.get_category_keywords(),
             rpm=self.get_rpm(),
+            use_original=self.get_use_original(),
+            low_conf_threshold=self.get_low_conf(),
         )
         self._preview_clf.signals.preview_done.connect(self._on_preview_done)
         self._preview_clf.signals.log.connect(lambda msg: self._preview_result.setText(msg))

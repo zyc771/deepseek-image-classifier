@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
                 self._config_tab.get_global_prompt(),
                 self._config_tab.get_category_keywords(),
                 self._config_tab.get_rpm(),
+                self._config_tab.get_use_original(),
+                self._config_tab.get_low_conf(),
             )
             self._run_tab.set_config(*cfg)
             self._status_label.setText(
