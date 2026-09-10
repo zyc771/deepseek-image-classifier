@@ -230,6 +230,10 @@ class ConfigTab(QWidget):
     def get_global_prompt(self) -> str:
         return self._prompt_input.toPlainText()
 
+    def set_global_prompt(self, text: str):
+        """由评估页回写提示词"""
+        self._prompt_input.setPlainText(text)
+
     def get_rpm(self) -> int:
         return self._rpm_spin.value()
 

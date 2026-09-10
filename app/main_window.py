@@ -1,7 +1,8 @@
-"""主窗口 — 组装配置页和运行页"""
+"""主窗口 — 组装配置页、运行页与评估页"""
 from PySide6.QtWidgets import QMainWindow, QTabWidget, QStatusBar, QLabel
 from app.config_tab import ConfigTab
 from app.run_tab import RunTab
+from app.eval_tab import EvalTab
 from app.providers import get_provider
 
 
@@ -21,8 +22,11 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         self._config_tab = ConfigTab()
         self._run_tab = RunTab()
+        self._eval_tab = EvalTab()
+        self._eval_tab.save_to_config = self._config_tab.set_global_prompt
         tabs.addTab(self._config_tab, "配置")
         tabs.addTab(self._run_tab, "运行")
+        tabs.addTab(self._eval_tab, "评估")
         tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(tabs)
         self._tabs = tabs
@@ -45,6 +49,17 @@ class MainWindow(QMainWindow):
             self._run_tab.set_config(*cfg)
             self._status_label.setText(
                 f"就绪 | 模型: {get_provider('deepseek')['default_model']} | 分类: {len(cfg[3])}类"
+            )
+        elif index == 2:
+            # 切换到评估页时同步配置
+            self._config_tab.save_settings()
+            self._eval_tab.set_config(
+                self._config_tab.get_api_key(),
+                get_provider("deepseek")["default_model"],
+                self._config_tab.get_categories(),
+                self._config_tab.get_global_prompt(),
+                self._config_tab.get_rpm(),
+                self._config_tab.get_use_original(),
             )
 
     def closeEvent(self, event):
