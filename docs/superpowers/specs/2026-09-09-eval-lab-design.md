@@ -1,4 +1,4 @@
-# 评估实验室（Evaluation Lab）设计文档
+﻿# 评估实验室（Evaluation Lab）设计文档
 
 - 日期：2026-09-09
 - 状态：已确认（关键点经问答定稿）
@@ -161,7 +161,7 @@ class Evaluator(QThread):
 2. offscreen 冒烟：三 Tab 构建、评估页默认状态
 3. 打包 `python build.py`
 4. 用户真机验证：
-   - 选 `D:\BaiduNetdiskDownload\素材\kimi分类`（或实际数据集）→ 每类 15 张 → 开始
+   - 选 数据集根目录（或实际数据集）→ 每类 15 张 → 开始
    - 观察进度、完成后看准确率/混淆矩阵/错误缩略图
    - 改提示词（题材优先版）→ 再跑 → 历史对比看准确率变化
 5. 合并 `feature/eval-lab` → main → push
