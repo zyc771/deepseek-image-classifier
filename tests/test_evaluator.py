@@ -93,6 +93,18 @@ class TestSampling:
         assert picked[0][0] == "科技"  # 类别取自父目录名
 
 
+class TestBuildPrompt:
+    def test_prompt_includes_category_keywords(self, tmp_path):
+        """回归：分类定义必须包含每类关键词"""
+        evaluator = ev.Evaluator(
+            "deepseek", "k", "m", str(tmp_path), ["科技", "日常"],
+            "分类标准：\n{category_definitions}", category_keywords={"科技": "芯片;CPU"},
+        )
+        prompt = evaluator.build_prompt()
+        assert "- 科技: 芯片;CPU" in prompt
+        assert "- 日常" in prompt
+
+
 class TestBuildRecord:
     def test_statistics(self):
         rec = ev.build_record(

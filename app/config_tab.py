@@ -28,13 +28,23 @@ DEFAULT_KEYWORDS = {
     "经济": "金钱;股票;K线;商业;人民币",
 }
 DEFAULT_GLOBAL_PROMPT = (
-    "你是一个图片分类助手，所有图片本质上是搞笑/幽默内容。\n"
-    "根据图片内容从以下分类中选择最匹配的一个。\n\n"
+    "你是一个图片内容分类助手，所有图片本质上是搞笑/幽默内容。\n"
+    "请根据图片的【题材】从以下分类中选择最匹配的一个。\n\n"
     "分类标准：\n{category_definitions}\n\n"
-    "判定优先级：画面主体内容 > 背景环境 > 文字信息。\n"
-    "置信度要求：如果图片内容含糊、信息不足、多类难以取舍，请给 0.6 以下的低分；"
-    "只有确信匹配时才给 0.85 以上的高分。\n\n"
-    "输出格式（仅输出 JSON，不要输出任何解释或代码块标记）：\n"
+    "判定优先级：题材 > 画风 > 文字信息。\n"
+    "- 二次元/漫画/表情包画风的图片，只要题材指向明确（时政讽刺、军事装备、历史事件），按题材归类；"
+    "「动漫」仅指没有现实题材指向的纯二次元作品。\n"
+    "- 「日常」不是兜底类：只有真实生活场景（美食、宠物、自拍、居家、聊天记录）才归日常。\n"
+    "  自然风景/山川/地图 → 地理；书本/教室/笔记/学生 → 学习；电脑/手机/数码/芯片 → 科技。\n"
+    "- 历史人物（含近现代）、老照片、文物、年代场景 → 历史；当代时政活动（会议、外交、国旗、政府）→ 政治；"
+    "武器装备、军装、阅兵 → 军事。\n"
+    "- 游戏界面/电竞/手柄/网游画面 → 游戏。\n\n"
+    "置信度分档（严格遵守）：\n"
+    "- 0.90-1.00 主体与题材一眼可辨，无歧义\n"
+    "- 0.70-0.89 较有把握，存在少量其他可能\n"
+    "- 0.60-0.69 倾向性判断\n"
+    "- 0.00-0.59 画面信息不足、多类都可能、主体不明 —— 请诚实给低分\n\n"
+    "输出格式（仅输出 JSON，不要任何解释或代码块标记）：\n"
     '{"category": "分类名", "confidence": 0到1之间的数字, "keywords": ["关键词1", "关键词2", "关键词3"]}'
 )
 DEFAULT_RPM = 30
@@ -44,6 +54,13 @@ def _parse_categories(text: str) -> list[str]:
     """解析分号分隔的分类列表"""
     text = text.replace("；", ";")
     return [c.strip() for c in text.split(";") if c.strip()]
+
+
+def _as_bool(value) -> bool:
+    """健壮地解析 QSettings 布尔值（注册表中可能是 'true'/'false' 字符串或布尔）"""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
 
 
 class ConfigTab(QWidget):
@@ -311,7 +328,7 @@ class ConfigTab(QWidget):
         rpm = int(s.value("rpm", DEFAULT_RPM))
         self._rpm_slider.setValue(rpm)
         self._rpm_spin.setValue(rpm)
-        self._original_check.setChecked(bool(s.value("use_original", False)))
+        self._original_check.setChecked(_as_bool(s.value("use_original", False)))
         self._low_conf_spin.setValue(float(s.value("low_conf_threshold", 0.6)))
         self._on_categories_changed(self._cat_input.text())
         s.beginGroup("kw")

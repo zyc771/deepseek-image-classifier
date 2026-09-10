@@ -129,6 +129,10 @@ class Evaluator(QThread):
         self._cancelled = True
         self.log.emit("正在取消...")
 
+    def build_prompt(self) -> str:
+        """构建评估用提示词（含分类定义）"""
+        return build_prompt_text(self._prompt_text, self._categories, self._category_keywords)
+
     def run(self):
         try:
             by_cat = scan_dataset(self._root, self._categories)
@@ -139,9 +143,7 @@ class Evaluator(QThread):
                 self.finished_record.emit({})
                 return
 
-            prompt_text = build_prompt_text(
-                self._prompt_text, self._categories, self._category_keywords
-            )
+            prompt_text = self.build_prompt()
             results: list[tuple[str, str, float, str]] = []
             total_tokens = 0
             start = time.time()

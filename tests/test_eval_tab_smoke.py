@@ -28,6 +28,15 @@ def test_set_config_fills_prompt(qapp, tmp_path):
     assert "提示词" in tab._prompt_edit.toPlainText()
     assert tab._categories == ["科技", "日常"]
     assert tab._model == "model-x"
+    assert tab._category_keywords == {}
+
+
+def test_set_config_stores_keywords(qapp, tmp_path):
+    """回归：评估页必须接收分类关键词，否则分类定义为空"""
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    tab.set_config("key", "m", ["科技"], "定义：\n{category_definitions}", 30, False,
+                   {"科技": "芯片;CPU"})
+    assert tab._category_keywords == {"科技": "芯片;CPU"}
 
 
 def test_history_table_loads_runs(qapp, tmp_path):

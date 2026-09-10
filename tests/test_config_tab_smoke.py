@@ -99,3 +99,20 @@ def test_legacy_tool_one_time_migration(qapp, iso_settings):
     assert _new_settings().value("keys", "").startswith("dpapi:")
     tab2 = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
     assert tab2.get_api_key() == "sk-from-old-tool"
+
+
+def test_use_original_string_false_parsed_correctly(qapp, iso_settings):
+    """回归：注册表中存字符串 'false' 时必须解析为 False（bool('false') 是 True 的坑）"""
+    s = _new_settings()
+    s.setValue("use_original", "false")
+    s.sync()
+    tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+    assert tab.get_use_original() is False
+
+
+def test_use_original_string_true_parsed_correctly(qapp, iso_settings):
+    s = _new_settings()
+    s.setValue("use_original", "true")
+    s.sync()
+    tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+    assert tab.get_use_original() is True

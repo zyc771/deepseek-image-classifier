@@ -33,6 +33,7 @@ class EvalTab(QWidget):
         self._model = get_provider("deepseek")["default_model"]
         self._rpm = 60
         self._use_original = False
+        self._category_keywords: dict[str, str] = {}
         self._config_prompt = ""
         self._build_ui()
         self._reload_history()
@@ -159,12 +160,14 @@ class EvalTab(QWidget):
         outer.addWidget(splitter)
 
     # ── 配置注入 ──
-    def set_config(self, api_key, model, categories, global_prompt, rpm, use_original):
+    def set_config(self, api_key, model, categories, global_prompt, rpm, use_original,
+                   category_keywords: dict | None = None):
         self._api_key = api_key
         self._model = model or get_provider("deepseek")["default_model"]
         self._categories = list(categories or [])
         self._rpm = rpm or 60
         self._use_original = bool(use_original)
+        self._category_keywords = dict(category_keywords or {})
 
         current = self._prompt_edit.toPlainText()
         # 编辑框为空或仍等于上次载入的配置提示词时才覆盖（避免丢弃临时编辑）
@@ -232,7 +235,7 @@ class EvalTab(QWidget):
             "deepseek", self._api_key, self._model, str(root), self._categories,
             self._prompt_edit.toPlainText(), per_category=self._per_cat_spin.value(),
             full=self._full_check.isChecked(), use_original=self._use_original,
-            rpm=self._rpm, fixed=fixed,
+            rpm=self._rpm, fixed=fixed, category_keywords=self._category_keywords,
         )
         self._evaluator.progress.connect(self._on_progress)
         self._evaluator.finished_record.connect(self._on_finished)
