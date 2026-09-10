@@ -1,10 +1,13 @@
 """DeepSeek 视觉 API 图片分类核心 — 信号驱动的分类器"""
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from collections import defaultdict
 
 from PySide6.QtCore import QThread, Signal, QObject
+
+from app.vlm import RateLimiter
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
@@ -65,7 +68,8 @@ class Classifier(QThread):
 
     def __init__(self, service: str, api_key: str, model: str, source_dir: str, output_dir: str,
                  categories: list[str], global_prompt: str, category_keywords: dict[str, str] = None,
-                 rpm: int = 30, use_original: bool = False, low_conf_threshold: float = 0.6):
+                 rpm: int = 30, use_original: bool = False, low_conf_threshold: float = 0.6,
+                 concurrency: int = 3):
         super().__init__()
         self.signals = ClassifierSignals()
         self._service = service
@@ -79,6 +83,7 @@ class Classifier(QThread):
         self._rpm = rpm
         self._use_original = use_original
         self._low_conf_threshold = low_conf_threshold
+        self._concurrency = max(1, int(concurrency or 1))
 
         self._paused = False
         self._cancelled = False
@@ -86,6 +91,17 @@ class Classifier(QThread):
         # Per-category result collector
         self._result_keywords: dict[str, list[str]] = defaultdict(list)
         self._category_confidences: dict[str, list[float]] = defaultdict(list)
+
+    def _process_image(self, img: Path, prompt_text: str, limiter: RateLimiter):
+        """工作线程任务：暂停等待 → 限速 → 分类；取消时返回 None"""
+        while self._paused and not self._cancelled:
+            time.sleep(0.2)
+        if self._cancelled:
+            return None
+        limiter.acquire()
+        if self._cancelled:
+            return None
+        return self._classify_one(img, prompt_text)
 
     def run(self):
         """主入口"""
@@ -116,29 +132,43 @@ class Classifier(QThread):
         prompt_text = self._global_prompt.replace("{categories}", cat_list)
         prompt_text = prompt_text.replace("{category_definitions}", cat_defs)
 
-        for idx, img in enumerate(pending):
-            if self._cancelled:
-                self.signals.log.emit("已取消")
-                break
+        limiter = RateLimiter(self._rpm)
+        workers = max(1, int(self._concurrency))
+        done = 0
+        cancelled_mid = False
 
-            while self._paused and not self._cancelled:
-                time.sleep(0.2)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map = {}
+            for img in pending:
+                if self._cancelled:
+                    break
+                fut = pool.submit(self._process_image, img, prompt_text, limiter)
+                future_map[fut] = img
 
-            if self._cancelled:
-                break
+            for fut in as_completed(future_map):
+                img = future_map[fut]
+                done += 1
+                if self._cancelled and not cancelled_mid:
+                    cancelled_mid = True
+                    self.signals.log.emit("已取消（等待在途请求结束）")
 
-            # 限速
-            if idx > 0:
-                elapsed = time.time() - start_time
-                expected = idx / (self._rpm / 60.0)
-                if elapsed < expected:
-                    time.sleep(expected - elapsed)
+                try:
+                    result = fut.result()
+                except Exception as e:
+                    failed += 1
+                    self.signals.progress.emit(
+                        done, pending_count, img.name, "ERROR", 0, [], 0, 0
+                    )
+                    self.signals.log.emit(f"[{done}/{pending_count}] {img.name} → 失败: {str(e)[:60]}")
+                    continue
 
-            try:
-                category, confidence, keywords, raw, pt, ct = self._classify_one(img, prompt_text)
+                if result is None:      # 取消后被跳过的任务
+                    continue
+
+                category, confidence, keywords, raw, pt, ct = result
                 category = self._resolve_category(category, confidence)
                 if category == "待确认":
-                    self.signals.log.emit(f"[{idx+1}/{pending_count}] {img.name} → 低置信度({confidence:.2f}) 待确认")
+                    self.signals.log.emit(f"[{done}/{pending_count}] {img.name} → 低置信度({confidence:.2f}) 待确认")
                 results[category]["count"] += 1
                 results[category]["confidences"].append(confidence)
                 if keywords:
@@ -154,15 +184,9 @@ class Classifier(QThread):
                 shutil.copy2(img, unique_target(dest / img.name))
 
                 self.signals.progress.emit(
-                    idx + 1, pending_count, img.name, category,
+                    done, pending_count, img.name, category,
                     confidence, keywords, pt, ct
                 )
-            except Exception as e:
-                failed += 1
-                self.signals.progress.emit(
-                    idx + 1, pending_count, img.name, "ERROR", 0, [], 0, 0
-                )
-                self.signals.log.emit(f"[{idx+1}/{pending_count}] {img.name} → 失败: {str(e)[:60]}")
 
         elapsed = time.time() - start_time
 
