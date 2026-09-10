@@ -26,6 +26,50 @@ class TestScan:
         assert by_cat["历史"] == []
 
 
+class TestRecursiveScan:
+    def test_subdirectory_images_included(self, tmp_path):
+        root = tmp_path / "ds"
+        (root / "历史" / "子A").mkdir(parents=True)
+        (root / "历史" / "a.jpg").write_bytes(b"1")
+        (root / "历史" / "子A" / "b.jpg").write_bytes(b"2")
+        by_cat = ev.scan_dataset(root, ["历史"])
+        assert len(by_cat["历史"]) == 2
+
+    def test_non_image_files_ignored(self, tmp_path):
+        root = tmp_path / "ds"
+        (root / "历史").mkdir(parents=True)
+        (root / "历史" / "a.jpg").write_bytes(b"1")
+        (root / "历史" / "note.vesf").write_bytes(b"x")
+        (root / "历史" / "readme.txt").write_bytes(b"y")
+        assert len(ev.scan_dataset(root, ["历史"])["历史"]) == 1
+
+    def test_deep_nesting(self, tmp_path):
+        root = tmp_path / "ds"
+        deep = root / "日常" / "2024" / "01" / "week1"
+        deep.mkdir(parents=True)
+        (deep / "x.png").write_bytes(b"1")
+        assert len(ev.scan_dataset(root, ["日常"])["日常"]) == 1
+
+
+class TestFixedSetWithSubdir:
+    def test_gt_derived_from_top_level_dir(self, tmp_path):
+        root = tmp_path / "ds"
+        (root / "历史" / "子A").mkdir(parents=True)
+        img = root / "历史" / "子A" / "b.jpg"
+        img.write_bytes(b"2")
+        picked = ev.pick_samples({}, 5, False, [str(img)], root)
+        assert picked[0][0] == "历史"
+        assert picked[0][1] == img
+
+    def test_flat_file_gt_from_parent(self, tmp_path):
+        root = tmp_path / "ds"
+        (root / "科技").mkdir(parents=True)
+        img = root / "科技" / "a.jpg"
+        img.write_bytes(b"1")
+        picked = ev.pick_samples({}, 5, False, [str(img)], root)
+        assert picked[0][0] == "科技"
+
+
 class TestSampling:
     def _by_cat(self, tmp_path):
         root = _make_dataset(tmp_path)

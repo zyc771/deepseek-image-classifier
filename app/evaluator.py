@@ -14,22 +14,40 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
 def scan_dataset(root: Path, categories: list[str]) -> dict[str, list[Path]]:
-    """按类别名扫描数据集子目录，返回 {类别: [图片路径]}（缺失目录为空列表）"""
+    """按类别名递归扫描数据集子目录，返回 {类别: [图片路径]}（缺失目录为空列表）
+
+    类别目录下可有多层子文件夹（如 历史/2024/week1/x.jpg），标准答案类别
+    始终取一级目录名。
+    """
     by_cat: dict[str, list[Path]] = {}
     for cat in categories:
         d = Path(root) / cat
         if d.is_dir():
-            by_cat[cat] = sorted(f for f in d.iterdir() if f.suffix.lower() in IMAGE_EXTS)
+            by_cat[cat] = sorted(
+                f for f in d.rglob("*")
+                if f.is_file() and f.suffix.lower() in IMAGE_EXTS
+            )
         else:
             by_cat[cat] = []
     return by_cat
 
 
+def gt_from_path(path: Path, root: Path) -> str:
+    """从图片路径推导标准答案类别：优先取相对数据集根的第一段目录名"""
+    try:
+        rel = path.relative_to(Path(root))
+    except ValueError:
+        return path.parent.name
+    if len(rel.parts) >= 2:
+        return rel.parts[0]
+    return path.parent.name
+
+
 def pick_samples(by_cat: dict[str, list[Path]], per_category: int, full: bool,
                  fixed: list[str] | None, root: Path) -> list[tuple[str, Path]]:
-    """返回 [(标准答案类别, 图片路径)]；fixed 非空时按清单执行（类别取父目录名）"""
+    """返回 [(标准答案类别, 图片路径)]；fixed 非空时按清单执行（支持子目录内文件）"""
     if fixed:
-        return [(Path(item).parent.name, Path(item)) for item in fixed]
+        return [(gt_from_path(Path(item), root), Path(item)) for item in fixed]
 
     picked: list[tuple[str, Path]] = []
     for cat, files in by_cat.items():
