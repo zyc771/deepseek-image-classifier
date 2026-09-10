@@ -3,12 +3,13 @@ import hashlib
 import random
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from app.vlm import build_prompt_text, classify_image, parse_response
+from app.vlm import RateLimiter, build_prompt_text, classify_image, parse_response
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
@@ -109,7 +110,8 @@ class Evaluator(QThread):
     def __init__(self, service: str, api_key: str, model: str, dataset_root: str,
                  categories: list[str], prompt_text: str, per_category: int = 15,
                  full: bool = False, use_original: bool = False, rpm: int = 60,
-                 fixed: list[str] | None = None, category_keywords: dict[str, str] | None = None):
+                 fixed: list[str] | None = None, category_keywords: dict[str, str] | None = None,
+                 concurrency: int = 3):
         super().__init__()
         self._service = service
         self._api_key = api_key
@@ -123,6 +125,7 @@ class Evaluator(QThread):
         self._rpm = rpm
         self._fixed = fixed
         self._category_keywords = category_keywords or {}
+        self._concurrency = max(1, int(concurrency or 1))
         self._cancelled = False
 
     def cancel(self):
@@ -132,6 +135,24 @@ class Evaluator(QThread):
     def build_prompt(self) -> str:
         """构建评估用提示词（含分类定义）"""
         return build_prompt_text(self._prompt_text, self._categories, self._category_keywords)
+
+    def _evaluate_one(self, sample: tuple[str, Path], prompt_text: str, limiter: RateLimiter):
+        """工作线程任务：限速 → 分类 → 解析；返回 (gt, pred, conf, path, tokens)"""
+        gt, path = sample
+        if self._cancelled:
+            return None
+        limiter.acquire()
+        if self._cancelled:
+            return None
+        try:
+            raw, pt, ct = classify_image(
+                self._service, self._api_key, self._model, path,
+                prompt_text, self._use_original,
+            )
+            pred, conf, _ = parse_response(raw, self._categories)
+            return gt, pred, conf, str(path), pt + ct, None
+        except Exception as e:
+            return gt, "ERROR", 0.0, str(path), 0, str(e)
 
     def run(self):
         try:
@@ -146,39 +167,40 @@ class Evaluator(QThread):
             prompt_text = self.build_prompt()
             results: list[tuple[str, str, float, str]] = []
             total_tokens = 0
+            done = 0
             start = time.time()
+            limiter = RateLimiter(self._rpm)
 
-            for idx, (gt, path) in enumerate(samples):
-                if self._cancelled:
-                    self.log.emit("已取消（本次结果不保存）")
-                    self.finished_record.emit({})
-                    return
+            with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
+                future_map = {
+                    pool.submit(self._evaluate_one, sample, prompt_text, limiter): sample
+                    for sample in samples
+                }
+                for fut in as_completed(future_map):
+                    outcome = fut.result()
+                    if outcome is None:
+                        continue
+                    gt, pred, conf, path_str, tokens, err = outcome
+                    done += 1
+                    total_tokens += tokens
+                    if err:
+                        self.log.emit(f"[{done}/{total}] {Path(path_str).name} → 失败: {err[:50]}")
+                    results.append((gt, pred, conf, path_str))
+                    self.progress.emit(done, total, Path(path_str).name, pred, conf)
 
-                if idx > 0:
-                    elapsed = time.time() - start
-                    expected = idx / (self._rpm / 60.0)
-                    if elapsed < expected:
-                        time.sleep(expected - elapsed)
-
-                try:
-                    raw, pt, ct = classify_image(
-                        self._service, self._api_key, self._model, path,
-                        prompt_text, self._use_original,
-                    )
-                    pred, conf, _ = parse_response(raw, self._categories)
-                    total_tokens += pt + ct
-                except Exception as e:
-                    pred, conf = "ERROR", 0.0
-                    self.log.emit(f"[{idx+1}/{total}] {path.name} → 失败: {str(e)[:50]}")
-
-                results.append((gt, pred, conf, str(path)))
-                self.progress.emit(idx + 1, total, path.name, pred, conf)
+            if self._cancelled:
+                self.log.emit("已取消（本次结果不保存）")
+                self.finished_record.emit({})
+                return
 
             record = build_record(
                 results, prompt_text, str(self._root), total,
                 time.time() - start, total_tokens, self._use_original,
             )
             self.finished_record.emit(record)
+        except Exception as e:
+            self.log.emit(f"评估异常: {e}")
+            self.finished_record.emit({})
         except Exception as e:
             self.log.emit(f"评估异常: {e}")
             self.finished_record.emit({})

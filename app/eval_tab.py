@@ -20,6 +20,7 @@ from app.evaluator import Evaluator, pick_samples, scan_dataset
 from app.providers import get_provider
 
 THUMB = 96
+EVAL_RPM_DEFAULT = 120
 
 
 class EvalTab(QWidget):
@@ -34,6 +35,7 @@ class EvalTab(QWidget):
         self._rpm = 60
         self._use_original = False
         self._category_keywords: dict[str, str] = {}
+        self._concurrency = 3
         self._config_prompt = ""
         self._build_ui()
         self._reload_history()
@@ -92,6 +94,15 @@ class EvalTab(QWidget):
 
         g_ctrl = QGroupBox("评估控制")
         cl = QVBoxLayout(g_ctrl)
+        row_rpm = QHBoxLayout()
+        row_rpm.addWidget(QLabel("评估频率:"))
+        self._eval_rpm_spin = QSpinBox()
+        self._eval_rpm_spin.setRange(1, 600)
+        self._eval_rpm_spin.setValue(EVAL_RPM_DEFAULT)
+        row_rpm.addWidget(self._eval_rpm_spin)
+        row_rpm.addWidget(QLabel("张/分钟（独立于配置页，可用更高频率加速评估）"))
+        row_rpm.addStretch()
+        cl.addLayout(row_rpm)
         crow = QHBoxLayout()
         self._start_btn = QPushButton("▶ 开始评估")
         self._start_btn.clicked.connect(self._start)
@@ -161,13 +172,14 @@ class EvalTab(QWidget):
 
     # ── 配置注入 ──
     def set_config(self, api_key, model, categories, global_prompt, rpm, use_original,
-                   category_keywords: dict | None = None):
+                   category_keywords: dict | None = None, concurrency: int = 3):
         self._api_key = api_key
         self._model = model or get_provider("deepseek")["default_model"]
         self._categories = list(categories or [])
         self._rpm = rpm or 60
         self._use_original = bool(use_original)
         self._category_keywords = dict(category_keywords or {})
+        self._concurrency = max(1, int(concurrency or 3))
 
         current = self._prompt_edit.toPlainText()
         # 编辑框为空或仍等于上次载入的配置提示词时才覆盖（避免丢弃临时编辑）
@@ -235,7 +247,9 @@ class EvalTab(QWidget):
             "deepseek", self._api_key, self._model, str(root), self._categories,
             self._prompt_edit.toPlainText(), per_category=self._per_cat_spin.value(),
             full=self._full_check.isChecked(), use_original=self._use_original,
-            rpm=self._rpm, fixed=fixed, category_keywords=self._category_keywords,
+            rpm=self._eval_rpm_spin.value(), fixed=fixed,
+            category_keywords=self._category_keywords,
+            concurrency=self._concurrency,
         )
         self._evaluator.progress.connect(self._on_progress)
         self._evaluator.finished_record.connect(self._on_finished)

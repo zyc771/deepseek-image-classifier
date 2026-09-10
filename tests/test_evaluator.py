@@ -105,6 +105,51 @@ class TestBuildPrompt:
         assert "- 日常" in prompt
 
 
+class TestConcurrentEvaluation:
+    def test_full_evaluation_with_mock_api(self, tmp_path, monkeypatch):
+        import time as _time
+        root = _make_dataset(tmp_path)  # 科技3 + 日常2
+        calls = []
+
+        def fake_classify(service, api_key, model, path, prompt_text, use_original=False):
+            calls.append(Path(path).name)
+            _time.sleep(0.05)
+            return '{"category": "科技", "confidence": 0.9, "keywords": []}', 10, 5
+
+        monkeypatch.setattr(ev, "classify_image", fake_classify)
+        evaluator = ev.Evaluator(
+            "deepseek", "k", "m", str(root), ["科技", "日常"], "p {category_definitions}",
+            full=True, rpm=600, concurrency=3,
+        )
+        records = []
+        evaluator.finished_record.connect(lambda r: records.append(r))
+        evaluator.run()
+
+        assert len(calls) == 5
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["total"] == 5
+        assert rec["correct"] == 3          # 科技 3 张正确；日常 2 张被误判为科技
+        assert rec["confusion"]["日常"]["科技"] == 2
+        assert rec["total_tokens"] == 75    # 5 × (10 + 5)
+
+    def test_cancel_before_run_emits_empty(self, tmp_path, monkeypatch):
+        root = _make_dataset(tmp_path)
+        monkeypatch.setattr(
+            ev, "classify_image",
+            lambda *a, **kw: ('{"category": "科技", "confidence": 0.9}', 1, 1),
+        )
+        evaluator = ev.Evaluator(
+            "deepseek", "k", "m", str(root), ["科技", "日常"], "p",
+            full=True, rpm=600, concurrency=2,
+        )
+        records = []
+        evaluator.finished_record.connect(lambda r: records.append(r))
+        evaluator.cancel()
+        evaluator.run()
+        assert records == [{}]
+
+
 class TestBuildRecord:
     def test_statistics(self):
         rec = ev.build_record(

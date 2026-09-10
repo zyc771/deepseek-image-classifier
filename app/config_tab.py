@@ -48,6 +48,7 @@ DEFAULT_GLOBAL_PROMPT = (
     '{"category": "分类名", "confidence": 0到1之间的数字, "keywords": ["关键词1", "关键词2", "关键词3"]}'
 )
 DEFAULT_RPM = 30
+DEFAULT_CONCURRENCY = 3
 
 
 def _parse_categories(text: str) -> list[str]:
@@ -173,18 +174,18 @@ class ConfigTab(QWidget):
         gi.addLayout(row6)
         layout.addWidget(group_img)
 
-        # ── 请求频率 ──
-        group_model = QGroupBox("请求频率")
+        # ── 请求频率与并发 ──
+        group_model = QGroupBox("请求频率与并发")
         gm = QVBoxLayout(group_model)
         row4 = QHBoxLayout()
         row4.addWidget(QLabel("请求频率:"))
         self._rpm_slider = QSlider(Qt.Orientation.Horizontal)
-        self._rpm_slider.setRange(1, 60)
+        self._rpm_slider.setRange(1, 600)
         self._rpm_slider.setValue(DEFAULT_RPM)
         self._rpm_slider.valueChanged.connect(lambda v: self._rpm_spin.setValue(v))
         row4.addWidget(self._rpm_slider)
         self._rpm_spin = QSpinBox()
-        self._rpm_spin.setRange(1, 60)
+        self._rpm_spin.setRange(1, 600)
         self._rpm_spin.setValue(DEFAULT_RPM)
         self._rpm_spin.valueChanged.connect(lambda v: self._rpm_slider.setValue(v))
         self._rpm_label = QLabel("30 张/分钟")
@@ -192,6 +193,16 @@ class ConfigTab(QWidget):
         row4.addWidget(self._rpm_spin)
         row4.addWidget(self._rpm_label)
         gm.addLayout(row4)
+
+        row5 = QHBoxLayout()
+        row5.addWidget(QLabel("并发数:"))
+        self._conc_spin = QSpinBox()
+        self._conc_spin.setRange(1, 8)
+        self._conc_spin.setValue(DEFAULT_CONCURRENCY)
+        row5.addWidget(self._conc_spin)
+        row5.addWidget(QLabel("（同时发送的请求数，越高越快；429 频繁时请调低）"))
+        row5.addStretch()
+        gm.addLayout(row5)
         layout.addWidget(group_model)
 
         # ── 单张测试 ──
@@ -254,6 +265,9 @@ class ConfigTab(QWidget):
     def get_rpm(self) -> int:
         return self._rpm_spin.value()
 
+    def get_concurrency(self) -> int:
+        return self._conc_spin.value()
+
     def get_use_original(self) -> bool:
         return self._original_check.isChecked()
 
@@ -280,6 +294,7 @@ class ConfigTab(QWidget):
         s.setValue("categories_raw", self._cat_input.text())
         s.setValue("global_prompt", self.get_global_prompt())
         s.setValue("rpm", self.get_rpm())
+        s.setValue("concurrency", self.get_concurrency())
         s.setValue("use_original", self.get_use_original())
         s.setValue("low_conf_threshold", self.get_low_conf())
         # 保存每类关键词
@@ -328,6 +343,7 @@ class ConfigTab(QWidget):
         rpm = int(s.value("rpm", DEFAULT_RPM))
         self._rpm_slider.setValue(rpm)
         self._rpm_spin.setValue(rpm)
+        self._conc_spin.setValue(int(s.value("concurrency", DEFAULT_CONCURRENCY)))
         self._original_check.setChecked(_as_bool(s.value("use_original", False)))
         self._low_conf_spin.setValue(float(s.value("low_conf_threshold", 0.6)))
         self._on_categories_changed(self._cat_input.text())

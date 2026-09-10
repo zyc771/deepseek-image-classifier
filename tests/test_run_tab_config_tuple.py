@@ -9,10 +9,10 @@ def test_set_config_unpack_order():
     tab.set_config(
         "key", "/src", "/out",
         ["科技"], "prompt {categories}", {"科技": "芯片"}, 42,
-        use_original=True, low_conf=0.7,
+        use_original=True, low_conf=0.7, concurrency=5,
     )
     (api_key, src, out, cats, prompt, kws, rpm,
-     use_original, low_conf) = tab._config
+     use_original, low_conf, concurrency) = tab._config
     assert api_key == "key"
     assert src == "/src"
     assert out == "/out"
@@ -22,12 +22,14 @@ def test_set_config_unpack_order():
     assert rpm == 42
     assert use_original is True
     assert low_conf == 0.7
+    assert concurrency == 5
 
 
 def test_set_config_defaults():
     app = QApplication.instance() or QApplication([])
     tab = RunTab()
     tab.set_config("key", "/src", "/out", ["科技"], "p", {}, 30)
-    _, _, _, _, _, _, _, use_original, low_conf = tab._config
+    _, _, _, _, _, _, _, use_original, low_conf, concurrency = tab._config
     assert use_original is False
     assert low_conf == 0.6
+    assert concurrency == 3

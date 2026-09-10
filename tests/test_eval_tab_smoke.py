@@ -31,6 +31,12 @@ def test_set_config_fills_prompt(qapp, tmp_path):
     assert tab._category_keywords == {}
 
 
+def test_eval_rpm_is_independent_and_configurable(qapp, tmp_path):
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    assert tab._eval_rpm_spin.value() == 120
+    assert tab._eval_rpm_spin.maximum() == 600
+
+
 def test_set_config_stores_keywords(qapp, tmp_path):
     """回归：评估页必须接收分类关键词，否则分类定义为空"""
     tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))

@@ -116,3 +116,19 @@ def test_use_original_string_true_parsed_correctly(qapp, iso_settings):
     s.sync()
     tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
     assert tab.get_use_original() is True
+
+
+def test_speed_settings_ranges_and_persistence(qapp, iso_settings):
+    tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+    # RPM 上限放开到 600，并发默认 3
+    assert tab._rpm_spin.maximum() == 600
+    assert tab._rpm_slider.maximum() == 600
+    assert tab.get_concurrency() == 3
+
+    tab._rpm_spin.setValue(300)
+    tab._conc_spin.setValue(5)
+    tab.save_settings()
+
+    tab2 = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+    assert tab2.get_rpm() == 300
+    assert tab2.get_concurrency() == 5
