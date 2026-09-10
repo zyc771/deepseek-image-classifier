@@ -1,0 +1,84 @@
+"""评估线程与抽样逻辑测试（monkeypatch 掉网络调用）"""
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from pathlib import Path
+
+import app.evaluator as ev
+
+
+def _make_dataset(tmp_path: Path) -> Path:
+    root = tmp_path / "dataset"
+    for cat, n in (("科技", 3), ("日常", 2)):
+        d = root / cat
+        d.mkdir(parents=True)
+        for i in range(n):
+            (d / f"{cat}{i}.jpg").write_bytes(b"x")
+    return root
+
+
+class TestScan:
+    def test_scan_groups_by_category(self, tmp_path):
+        root = _make_dataset(tmp_path)
+        by_cat = ev.scan_dataset(root, ["科技", "日常", "历史"])
+        assert len(by_cat["科技"]) == 3
+        assert len(by_cat["日常"]) == 2
+        assert by_cat["历史"] == []
+
+
+class TestSampling:
+    def _by_cat(self, tmp_path):
+        root = _make_dataset(tmp_path)
+        return root, ev.scan_dataset(root, ["科技", "日常"])
+
+    def test_per_category_sampling(self, tmp_path):
+        root, by_cat = self._by_cat(tmp_path)
+        picked = ev.pick_samples(by_cat, 2, False, None, root)
+        assert len(picked) == 4  # 2 类 × 2 张
+
+    def test_full_sampling_ignores_limit(self, tmp_path):
+        root, by_cat = self._by_cat(tmp_path)
+        picked = ev.pick_samples(by_cat, 1, True, None, root)
+        assert len(picked) == 5
+
+    def test_fixed_set_used_verbatim(self, tmp_path):
+        root, _ = self._by_cat(tmp_path)
+        fixed = [str(root / "科技" / "科技0.jpg")]
+        picked = ev.pick_samples({}, 2, False, fixed, root)
+        assert [str(p) for _, p in picked] == fixed
+        assert picked[0][0] == "科技"  # 类别取自父目录名
+
+
+class TestBuildRecord:
+    def test_statistics(self):
+        rec = ev.build_record(
+            results=[("科技", "科技", 0.9, "/d/科技/a.jpg"),
+                     ("科技", "日常", 0.5, "/d/科技/b.jpg"),
+                     ("日常", "日常", 0.8, "/d/日常/c.jpg")],
+            prompt_text="p",
+            dataset_root="d",
+            sample_size=3,
+            elapsed=12.5,
+            total_tokens=1000,
+            use_original=False,
+        )
+        assert rec["total"] == 3 and rec["correct"] == 2
+        assert abs(rec["accuracy"] - 66.666) < 0.01
+        assert rec["confusion"]["科技"]["日常"] == 1
+        assert len(rec["errors"]) == 1
+        assert rec["errors"][0]["gt"] == "科技" and rec["errors"][0]["pred"] == "日常"
+        assert rec["errors"][0]["path"] == "/d/科技/b.jpg"
+        assert rec["prompt_hash"] and rec["id"]
+
+    def test_error_pred_counted(self):
+        rec = ev.build_record(
+            results=[("科技", "ERROR", 0.0, "/d/科技/x.jpg")], prompt_text="p",
+            dataset_root="d", sample_size=1, elapsed=1.0, total_tokens=0,
+            use_original=False,
+        )
+        assert rec["accuracy"] == 0.0
+        assert rec["confusion"]["科技"]["ERROR"] == 1
+
+    def test_empty_results(self):
+        rec = ev.build_record([], "p", "d", 0, 0.0, 0, False)
+        assert rec["total"] == 0 and rec["accuracy"] == 0.0
