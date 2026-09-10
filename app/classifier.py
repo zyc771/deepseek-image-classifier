@@ -169,52 +169,13 @@ class Classifier(QThread):
 
     def _classify_one(self, filepath: Path, prompt_text: str) -> tuple:
         """单张分类，返回 (category, confidence, keywords, raw, prompt_tokens, completion_tokens)"""
-        if self._use_original:
-            with open(filepath, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode()
-            ext = filepath.suffix.lower().replace(".", "").replace("jpg", "jpeg")
-        else:
-            from app.image_prep import prepare_image
-            ext, img_b64 = prepare_image(filepath)
-        data_url = f"data:image/{ext};base64,{img_b64}"
-
-        for attempt in range(3):
-            try:
-                from app.providers import get_provider
-                resp = requests.post(
-                    get_provider(self._service)["endpoint"],
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self._model,
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {"type": "image_url", "image_url": {"url": data_url}},
-                                {"type": "text", "text": prompt_text},
-                            ]
-                        }]
-                    },
-                    timeout=60,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    raw = data["choices"][0]["message"]["content"].strip()
-                    usage = data.get("usage", {})
-                    pt = usage.get("prompt_tokens", 0)
-                    ct = usage.get("completion_tokens", 0)
-
-                    category, confidence, keywords = self._parse_response(raw)
-                    return category, confidence, keywords, raw, pt, ct
-                elif resp.status_code == 429:
-                    time.sleep(5 * (attempt + 1))
-                else:
-                    time.sleep(2)
-            except Exception:
-                time.sleep(2)
-        raise Exception(f"3次重试均失败")
+        from app.vlm import classify_image, parse_response
+        raw, pt, ct = classify_image(
+            self._service, self._api_key, self._model, filepath,
+            prompt_text, self._use_original,
+        )
+        category, confidence, keywords = parse_response(raw, self._categories)
+        return category, confidence, keywords, raw, pt, ct
 
     def _resolve_category(self, category: str, confidence: float) -> str:
         """低置信度分流：低于阈值 → 待确认"""
@@ -223,84 +184,9 @@ class Classifier(QThread):
         return category
 
     def _parse_response(self, raw: str) -> tuple[str, float, list[str]]:
-        """解析 API 返回 -> (分类, 置信度, 关键词列表)
-
-        四级策略：JSON → || 分隔 → 模糊匹配 → 未整理（向后兼容旧格式）
-        """
-        raw_clean = raw.strip()
-
-        parsed = self._try_parse_json(raw_clean)
-        if parsed is not None:
-            cat, conf, kws = parsed
-        elif "||" in raw_clean:
-            # 尝试按 || 切分
-            parts = [p.strip() for p in raw_clean.split("||")]
-            cat = parts[0] if len(parts) > 0 else "未整理"
-            conf = 0.8
-            if len(parts) > 1:
-                try:
-                    conf = float(parts[1])
-                except ValueError:
-                    conf = 0.8
-            kws = []
-            if len(parts) > 2:
-                kws = [k.strip() for k in parts[2].replace(",", "，").replace("，", ",").split(",") if k.strip()]
-        else:
-            # 回退：模糊匹配
-            cat = "未整理"
-            conf = 0.0
-            for c in self._categories:
-                if c in raw_clean:
-                    cat = c
-                    conf = 0.8 if raw_clean != c else 1.0
-                    break
-            kws = []
-
-        # 校验分类名
-        if cat not in self._categories:
-            for c in self._categories:
-                if c in cat:
-                    cat = c
-                    break
-            else:
-                cat = "未整理"
-
-        # 规范化置信度
-        conf = max(0.0, min(1.0, conf))
-
-        return cat, conf, kws
-
-    def _try_parse_json(self, raw_clean: str) -> tuple[str, float, list[str]] | None:
-        """提取 JSON 对象（允许模型包装文字/代码围栏）；失败返回 None"""
-        import json as _json
-
-        start = raw_clean.find("{")
-        end = raw_clean.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            obj = _json.loads(raw_clean[start:end + 1])
-        except Exception:
-            return None
-        if not isinstance(obj, dict):
-            return None
-
-        cat = str(obj.get("category", "")).strip()
-        conf = obj.get("confidence", 0.0)
-        try:
-            conf = float(conf)
-        except (TypeError, ValueError):
-            conf = 0.0
-
-        kws_obj = obj.get("keywords", []) or []
-        if isinstance(kws_obj, str):
-            kws = [k.strip() for k in kws_obj.replace(",", "，").replace("，", ",").split(",") if k.strip()]
-        elif isinstance(kws_obj, list):
-            kws = [str(k).strip() for k in kws_obj if str(k).strip()]
-        else:
-            kws = []
-
-        return cat or "未整理", conf, kws
+        """解析 API 返回（委托共享层，保持既有接口）"""
+        from app.vlm import parse_response
+        return parse_response(raw, self._categories)
 
     def preview(self, filepath: str):
         """单张预览测试（非线程）"""
