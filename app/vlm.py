@@ -1,8 +1,10 @@
 """视觉模型共享调用层 — 提示词构建 / 响应解析 / 单图分类
 
 被 Classifier（批量分类）与 Evaluator（批量评估）共用，避免逻辑重复。
+含并发支持：时隙限速器 + 线程本地 HTTP 连接复用。
 """
 import base64
+import threading
 import time
 from pathlib import Path
 
@@ -12,6 +14,42 @@ from app.image_prep import prepare_image
 from app.providers import get_provider
 
 RETRY_TIMES = 3
+
+_thread_local = threading.local()
+
+
+def _session() -> requests.Session:
+    """线程本地 requests.Session（复用 TCP/TLS 连接，省去每张图握手开销）"""
+    s = getattr(_thread_local, "session", None)
+    if s is None:
+        s = requests.Session()
+        _thread_local.session = s
+    return s
+
+
+class RateLimiter:
+    """时隙限速器：全局平均速率不超过 rpm，线程安全
+
+    每次 acquire() 预留一个时间槽，多线程并发时按槽位先后放行，
+    从而在并发下依然严格守住 RPM。
+    """
+
+    def __init__(self, rpm: int):
+        self.interval = 60.0 / max(int(rpm or 0), 1)
+        if self.interval > 60.0:      # rpm <= 1 时兜底为至少 1 张/分钟
+            self.interval = 60.0
+        self._lock = threading.Lock()
+        self._next_slot = 0.0
+
+    def acquire(self):
+        with self._lock:
+            now = time.monotonic()
+            if self._next_slot < now:
+                self._next_slot = now
+            wait = self._next_slot - now
+            self._next_slot += self.interval
+        if wait > 0:
+            time.sleep(wait)
 
 
 def build_prompt_text(global_prompt: str, categories: list[str],
@@ -123,7 +161,7 @@ def classify_image(service: str, api_key: str, model: str, filepath: Path,
 
     for attempt in range(RETRY_TIMES):
         try:
-            resp = requests.post(
+            resp = _session().post(
                 get_provider(service)["endpoint"],
                 headers={
                     "Authorization": f"Bearer {api_key}",
