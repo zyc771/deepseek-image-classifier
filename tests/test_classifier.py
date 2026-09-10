@@ -1,7 +1,7 @@
 """classifier 行为测试（不启动线程、不发网络请求）"""
 import shutil
 from pathlib import Path
-from app.classifier import Classifier
+from app.classifier import Classifier, base_name, scan_images, unique_target
 
 
 def _make_clf(tmp_path: Path, source_dir: Path, output_dir: Path, **kw):
@@ -131,3 +131,76 @@ class TestSummaryCancelledFlag:
     def test_init_defaults_not_cancelled(self, tmp_path):
         clf = _make_clf(tmp_path, tmp_path / "src", tmp_path / "out")
         assert clf._cancelled is False
+
+
+class TestRecursiveScan:
+    def test_scan_images_recursive(self, tmp_path):
+        src = tmp_path / "src"
+        (src / "sub" / "deep").mkdir(parents=True)
+        (src / "a.jpg").write_bytes(b"1")
+        (src / "sub" / "b.png").write_bytes(b"2")
+        (src / "sub" / "deep" / "c.jpeg").write_bytes(b"3")
+        (src / "sub" / "note.txt").write_bytes(b"x")
+        (src / "video.vesf").write_bytes(b"y")
+
+        files = scan_images(src)
+        assert [f.name for f in files] == ["a.jpg", "b.png", "c.jpeg"]
+
+    def test_scan_empty_dir(self, tmp_path):
+        src = tmp_path / "empty"
+        src.mkdir()
+        assert scan_images(src) == []
+
+
+class TestUniqueTarget:
+    def test_no_collision_returns_same_path(self, tmp_path):
+        p = tmp_path / "a.jpg"
+        assert unique_target(p) == p
+
+    def test_collision_appends_index(self, tmp_path):
+        p = tmp_path / "a.jpg"
+        p.write_bytes(b"x")
+        assert unique_target(p).name == "a_1.jpg"
+        (tmp_path / "a_1.jpg").write_bytes(b"y")
+        assert unique_target(p).name == "a_2.jpg"
+
+
+class TestBaseName:
+    def test_strips_serial_suffix(self):
+        assert base_name("a_1.jpg") == "a.jpg"
+        assert base_name("a_12.png") == "a.png"
+
+    def test_plain_name_unchanged(self):
+        assert base_name("a.jpg") == "a.jpg"
+
+    def test_non_serial_underscore_kept(self):
+        assert base_name("photo_2024.jpg") == "photo_2024.jpg"
+        assert base_name("my_photo.jpg") == "my_photo.jpg"
+
+
+class TestFilterDoneWithSerial:
+    def test_serial_suffixed_file_counts_as_done(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        img = src / "a.jpg"
+        img.write_bytes(b"imgdata")
+        sub = out / "科技"
+        sub.mkdir(parents=True)
+        shutil.copy2(img, sub / "a_1.jpg")  # 序号版本，内容/时间一致
+
+        clf = _make_clf(tmp_path, src, out)
+        assert clf._filter_done([img]) == []
+
+    def test_output_subdirectory_files_collected(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        img = src / "a.jpg"
+        img.write_bytes(b"imgdata")
+        nested = out / "科技" / "旧批次"
+        nested.mkdir(parents=True)
+        shutil.copy2(img, nested / "a.jpg")
+
+        clf = _make_clf(tmp_path, src, out)
+        assert clf._filter_done([img]) == []

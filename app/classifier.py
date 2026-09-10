@@ -1,11 +1,45 @@
-"""Kimi API 图片分类核心 — 信号驱动的分类器"""
-import base64
+"""DeepSeek 视觉 API 图片分类核心 — 信号驱动的分类器"""
 import shutil
 import time
 from pathlib import Path
 from collections import defaultdict
-import requests
+
 from PySide6.QtCore import QThread, Signal, QObject
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
+
+
+def scan_images(source_dir: Path) -> list[Path]:
+    """递归扫描源目录下的所有图片（含子文件夹）"""
+    return sorted(
+        f for f in Path(source_dir).rglob("*")
+        if f.is_file() and f.suffix.lower() in IMAGE_EXTS
+    )
+
+
+def base_name(name: str) -> str:
+    """规范化文件名：去掉重名序号后缀（a_1.jpg → a.jpg），用于判重比对
+
+    仅剥离 1~2 位纯数字序号（1-99），避免误伤 photo_2024.jpg 这类真实文件名。
+    """
+    stem, suffix = Path(name).stem, Path(name).suffix
+    head, sep, tail = stem.rpartition("_")
+    if sep and head and tail.isdigit() and len(tail) <= 2:
+        stem = head
+    return stem + suffix
+
+
+def unique_target(path: Path) -> Path:
+    """目标已存在时返回带序号的新路径（a.jpg → a_1.jpg → a_2.jpg …）"""
+    if not path.exists():
+        return path
+    stem, suffix = path.stem, path.suffix
+    i = 1
+    while True:
+        candidate = path.with_name(f"{stem}_{i}{suffix}")
+        if not candidate.exists():
+            return candidate
+        i += 1
 
 
 class ClassifierSignals(QObject):
@@ -55,9 +89,8 @@ class Classifier(QThread):
 
     def run(self):
         """主入口"""
-        # 扫描
-        images = [f for f in self._source_dir.iterdir()
-                  if f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
+        # 扫描（递归包含子文件夹）
+        images = scan_images(self._source_dir)
         self.signals.scan_done.emit(len(images), len(images))
 
         # 过滤已处理
@@ -118,7 +151,7 @@ class Classifier(QThread):
 
                 dest = self._output_dir / category
                 dest.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(img, dest / img.name)
+                shutil.copy2(img, unique_target(dest / img.name))
 
                 self.signals.progress.emit(
                     idx + 1, pending_count, img.name, category,
@@ -212,16 +245,14 @@ class Classifier(QThread):
         """过滤输出目录中已存在的文件: 匹配键 = (文件名, 大小, 修改时间)"""
         existing = set()
         if self._output_dir.exists():
-            for d in self._output_dir.iterdir():
-                if d.is_dir():
-                    for f in d.iterdir():
-                        if f.is_file():
-                            st = f.stat()
-                            existing.add((f.name, st.st_size, int(st.st_mtime)))
+            for f in self._output_dir.rglob("*"):
+                if f.is_file():
+                    st = f.stat()
+                    existing.add((base_name(f.name), st.st_size, int(st.st_mtime)))
         new_images = []
         for img in images:
             st = img.stat()
-            key = (img.name, st.st_size, int(st.st_mtime))
+            key = (base_name(img.name), st.st_size, int(st.st_mtime))
             if key not in existing:
                 new_images.append(img)
         skipped = len(images) - len(new_images)
