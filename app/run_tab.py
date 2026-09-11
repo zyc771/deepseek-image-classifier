@@ -97,6 +97,12 @@ class RunTab(QWidget):
         right_layout.addLayout(action_row)
         right_layout.addStretch()
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(left_container)
+        splitter.addWidget(right_container)
+        splitter.setSizes([640, 380])
+        layout.addWidget(splitter)
+
         self._success = 0
         self._failed = 0
         self._output_dir = ""
