@@ -5,7 +5,7 @@ import subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QPlainTextEdit, QProgressBar, QTableWidget,
-    QTableWidgetItem, QHeaderView, QFileDialog, QMessageBox,
+    QTableWidgetItem, QHeaderView, QFileDialog, QMessageBox, QSplitter,
 )
 from PySide6.QtCore import Qt, QThread
 from app.classifier import Classifier
@@ -18,6 +18,12 @@ class RunTab(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
+        left_container = QWidget()
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setSpacing(8)
+        right_container = QWidget()
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setSpacing(8)
 
         # ── 进度信息 ──
         group_progress = QGroupBox("进度")
@@ -33,12 +39,12 @@ class RunTab(QWidget):
         info_row.addWidget(self._count_label)
         info_row.addStretch()
         gp.addLayout(info_row)
-        layout.addWidget(group_progress)
+        left_layout.addWidget(group_progress)
 
         # ── 控制按钮 ──
         btn_row = QHBoxLayout()
         self._start_btn = QPushButton("▶ 开始分类")
-        self._start_btn.setStyleSheet("QPushButton{background:#4CAF50;color:white;padding:8px 24px;font-size:14px;}")
+        self._start_btn.setObjectName("primary")
         self._start_btn.clicked.connect(self._start)
         btn_row.addWidget(self._start_btn)
 
@@ -52,7 +58,7 @@ class RunTab(QWidget):
         self._cancel_btn.clicked.connect(self._cancel)
         btn_row.addWidget(self._cancel_btn)
         btn_row.addStretch()
-        layout.addLayout(btn_row)
+        left_layout.addLayout(btn_row)
 
         # ── 日志 ──
         group_log = QGroupBox("日志")
@@ -61,7 +67,7 @@ class RunTab(QWidget):
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(500)
         gl.addWidget(self._log)
-        layout.addWidget(group_log)
+        left_layout.addWidget(group_log, 1)
 
         # ── 统计 ──
         group_stats = QGroupBox("统计 (完成后显示)")
@@ -77,7 +83,7 @@ class RunTab(QWidget):
         token_row.addWidget(self._token_label)
         token_row.addStretch()
         gs.addLayout(token_row)
-        layout.addWidget(group_stats)
+        right_layout.addWidget(group_stats)
 
         # ── 操作按钮 ──
         action_row = QHBoxLayout()
@@ -88,7 +94,8 @@ class RunTab(QWidget):
         self._export_btn.clicked.connect(self._export_csv)
         action_row.addWidget(self._export_btn)
         action_row.addStretch()
-        layout.addLayout(action_row)
+        right_layout.addLayout(action_row)
+        right_layout.addStretch()
 
         self._success = 0
         self._failed = 0

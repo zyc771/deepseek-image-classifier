@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QLineEdit, QPushButton, QPlainTextEdit, QSlider, QSpinBox,
     QFileDialog, QMessageBox, QScrollArea, QFormLayout,
-    QCheckBox, QDoubleSpinBox,
+    QCheckBox, QDoubleSpinBox, QSplitter,
 )
 from PySide6.QtCore import Qt, QSettings, QThread
 from app.providers import get_provider
@@ -72,11 +72,12 @@ class ConfigTab(QWidget):
         self._legacy_settings = legacy_settings
         self._kw_inputs: dict[str, QLineEdit] = {}
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setSpacing(8)
+        left_container = QWidget()
+        self._left_layout = QVBoxLayout(left_container)
+        self._left_layout.setSpacing(10)
+        right_container = QWidget()
+        self._right_layout = QVBoxLayout(right_container)
+        self._right_layout.setSpacing(10)
 
         # ── API密钥 ──
         group_key = QGroupBox("API 密钥 (DeepSeek)")
@@ -89,7 +90,7 @@ class ConfigTab(QWidget):
         self._key_toggle.setCheckable(True)
         self._key_toggle.toggled.connect(self._toggle_key_visibility)
         gk.addWidget(self._key_toggle)
-        layout.addWidget(group_key)
+        self._left_layout.addWidget(group_key)
 
         # ── 文件夹 ──
         group_dir = QGroupBox("文件夹")
@@ -118,7 +119,7 @@ class ConfigTab(QWidget):
         btn_out.clicked.connect(self._browse_out)
         row2.addWidget(btn_out)
         gd.addLayout(row2)
-        layout.addWidget(group_dir)
+        self._left_layout.addWidget(group_dir)
 
         # ── 分类列表 ──
         group_cat = QGroupBox("分类列表（用分号隔开，中英文均可）")
@@ -127,7 +128,7 @@ class ConfigTab(QWidget):
         self._cat_input.setPlaceholderText("科技;日常;学习;体育;...")
         self._cat_input.textChanged.connect(self._on_categories_changed)
         gc.addWidget(self._cat_input)
-        layout.addWidget(group_cat)
+        self._left_layout.addWidget(group_cat)
 
         # ── 各分类关键词 ──
         group_kw = QGroupBox("各分类关键词（分号隔开）")
@@ -136,7 +137,7 @@ class ConfigTab(QWidget):
         self._kw_container.setLayout(self._kw_layout)
         gkw = QVBoxLayout(group_kw)
         gkw.addWidget(self._kw_container)
-        layout.addWidget(group_kw)
+        self._right_layout.addWidget(group_kw)
 
         # ── 总提示词 ──
         group_prompt = QGroupBox(
@@ -151,7 +152,7 @@ class ConfigTab(QWidget):
         btn_reset_prompt = QPushButton("恢复默认提示词")
         btn_reset_prompt.clicked.connect(lambda: self._prompt_input.setPlainText(DEFAULT_GLOBAL_PROMPT))
         gp.addWidget(btn_reset_prompt)
-        layout.addWidget(group_prompt)
+        self._right_layout.addWidget(group_prompt)
 
         # ── 图像处理与筛选 ──
         group_img = QGroupBox("图像处理与筛选")
@@ -172,7 +173,7 @@ class ConfigTab(QWidget):
         row6.addWidget(self._low_conf_hint)
         row6.addStretch()
         gi.addLayout(row6)
-        layout.addWidget(group_img)
+        self._left_layout.addWidget(group_img)
 
         # ── 请求频率与并发 ──
         group_model = QGroupBox("请求频率与并发")
@@ -203,7 +204,7 @@ class ConfigTab(QWidget):
         row5.addWidget(QLabel("（同时发送的请求数，越高越快；429 频繁时请调低）"))
         row5.addStretch()
         gm.addLayout(row5)
-        layout.addWidget(group_model)
+        self._left_layout.addWidget(group_model)
 
         # ── 单张测试 ──
         group_preview = QGroupBox("单张预览测试")
@@ -222,12 +223,25 @@ class ConfigTab(QWidget):
         self._preview_result = QLabel("结果: (未测试)")
         self._preview_result.setWordWrap(True)
         gprev.addWidget(self._preview_result)
-        layout.addWidget(group_preview)
+        self._right_layout.addWidget(group_preview)
 
-        layout.addStretch()
-        scroll.setWidget(container)
+        self._left_layout.addStretch()
+        self._right_layout.addStretch()
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setWidget(left_container)
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setWidget(right_container)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(left_scroll)
+        self._splitter.addWidget(right_scroll)
+        self._splitter.setSizes([430, 590])
+
         outer = QVBoxLayout(self)
-        outer.addWidget(scroll)
+        outer.addWidget(self._splitter)
 
         self._preview_thread = None
 

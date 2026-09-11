@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DeepSeek图片分类工具 — UI 原型 v2（左右分栏 + 夜间模式）</title>
+<style>
+  /* ================= 浅色主题（默认）================= */
+  :root[data-theme="light"] {
+    --bg: #eef1f6; --panel: #ffffff; --panel-2: #f4f6fa; --panel-3: #e9edf4;
+    --border: #dde3ec; --border-strong: #c9d2e0;
+    --text: #1e2430; --text-dim: #69748a; --text-mute: #97a1b4;
+    --primary: #2f7cf6; --primary-hover: #4a8ef8; --primary-soft: #e8f0fe; --primary-text: #fff;
+    --danger: #e05252; --danger-soft: #fdeaea; --warn: #d98a1f; --warn-soft: #fdf3e3;
+    --ok: #22a06b; --ok-soft: #e6f6ef;
+    --table-head: #f2f5fa; --row-alt: #fafbfd; --log-bg: #f7f9fc;
+    --shadow: 0 1px 2px rgba(20,30,50,.06);
+  }
+  /* ================= 深色夜间主题 ================= */
+  :root[data-theme="dark"] {
+    --bg: #14171f; --panel: #1c2029; --panel-2: #242934; --panel-3: #2b313d;
+    --border: #313846; --border-strong: #3d4557;
+    --text: #e7eaf2; --text-dim: #9ba4b8; --text-mute: #6f7a90;
+    --primary: #4b8ef7; --primary-hover: #5f9cf8; --primary-soft: #1e2b45; --primary-text: #fff;
+    --danger: #ef5f5f; --danger-soft: #3a2226; --warn: #e0a24a; --warn-soft: #3a2f1d;
+    --ok: #35c08a; --ok-soft: #16302a;
+    --table-head: #242934; --row-alt: #1f242e; --log-bg: #14171f;
+    --shadow: 0 1px 2px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 22px 70px; background: var(--bg); color: var(--text);
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif; font-size: 13px;
+    transition: background .15s, color .15s;
+  }
+
+  /* ---------- 顶部工具条 ---------- */
+  .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; max-width: 1240px; margin-left: auto; margin-right: auto; }
+  .topbar h1 { font-size: 15px; margin: 0 10px 0 0; font-weight: 600; }
+  .seg { display: flex; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; }
+  .seg button { border: none; background: var(--panel); color: var(--text-dim); padding: 7px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .seg button.active { background: var(--primary); color: var(--primary-text); font-weight: 600; }
+  .hint { color: var(--text-mute); font-size: 12px; margin-left: auto; }
+
+  /* ---------- 应用窗口 ---------- */
+  .window { max-width: 1240px; margin: 0 auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+  .titlebar { padding: 9px 14px; background: var(--panel-2); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); }
+  .titlebar .tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .icon-btn { border: 1px solid var(--border); background: var(--panel); color: var(--text-dim); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .icon-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+  /* ---------- Tab ---------- */
+  .tabs { display: flex; gap: 2px; padding: 8px 10px 0; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+  .tab { padding: 8px 22px; border-radius: 7px 7px 0 0; cursor: pointer; color: var(--text-dim); border: 1px solid transparent; border-bottom: none; }
+  .tab.active { background: var(--panel); color: var(--text); border-color: var(--border); font-weight: 600; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ---------- 左右分栏（模拟 QSplitter）---------- */
+  .split { display: flex; align-items: stretch; min-height: 620px; }
+  .pane { padding: 14px; overflow: auto; }
+  .pane.left { flex: 0 0 42%; border-right: 1px solid var(--border); }
+  .pane.right { flex: 1; background: var(--panel-2); }
+  .pane.left.wide { flex: 0 0 62%; }
+  .pane.right.narrow { flex: 0 0 38%; }
+  .split.sidebar-left .pane.left { flex: 0 0 38%; }
+
+  .pane-title { font-size: 11px; letter-spacing: .08em; color: var(--text-mute); text-transform: uppercase; margin: 2px 0 10px; font-weight: 600; }
+
+  /* ---------- 分组卡片 ---------- */
+  .group { border: 1px solid var(--border); border-radius: 9px; background: var(--panel); padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow); }
+  .group > .gtitle { font-size: 12px; font-weight: 700; color: var(--primary); margin: -24px 0 12px; padding: 0 7px; display: inline-block; background: var(--panel); }
+  .row { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; flex-wrap: wrap; }
+  .row:last-child { margin-bottom: 0; }
+  .row.stack { align-items: flex-start; }
+  label.lbl { color: var(--text-dim); font-size: 12px; min-width: 66px; flex: 0 0 auto; }
+
+  /* ---------- 控件 ---------- */
+  input[type=text], input[type=password], input[type=number], textarea, select {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: 7px; padding: 7px 10px; font-size: 13px; font-family: inherit; outline: none;
+    transition: border-color .12s, box-shadow .12s;
+  }
+  input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+  input.grow, textarea.grow { flex: 1; min-width: 130px; }
+  textarea { resize: vertical; line-height: 1.6; width: 100%; }
+  input[type=number] { text-align: center; width: 74px; }
+
+  button { padding: 7px 15px; border-radius: 7px; font-size: 13px; font-family: inherit; cursor: pointer; border: 1px solid var(--border-strong); background: var(--panel); color: var(--text); transition: background .12s, border-color .12s, color .12s; }
+  button:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
+  button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--primary-text); }
+  button.ghost { background: transparent; }
+  button.sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+
+  /* ---------- 进度条 ---------- */
+  .progress { height: 9px; background: var(--panel-3); border-radius: 5px; overflow: hidden; }
+  .progress > i { display: block; height: 100%; background: var(--primary); border-radius: 5px; }
+
+  /* ---------- 指标 / 徽章 ---------- */
+  .metrics { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  .metric { font-size: 12px; color: var(--text-dim); }
+  .metric b { color: var(--text); font-size: 15px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 11px; font-size: 11px; background: var(--panel-3); color: var(--text-dim); }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.err { background: var(--danger-soft); color: var(--danger); }
+
+  /* ---------- 表格 ---------- */
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+  th, td { border-bottom: 1px solid var(--border); padding: 7px 9px; text-align: center; }
+  th { background: var(--table-head); color: var(--text-dim); font-weight: 600; }
+  tbody tr:nth-child(even) td { background: var(--row-alt); }
+  td.hit { background: var(--ok-soft) !important; color: var(--ok); font-weight: 700; }
+  td.miss { background: var(--danger-soft) !important; color: var(--danger); font-weight: 600; }
+  tbody th { text-align: center; color: var(--text-dim); font-weight: 600; background: var(--panel-2); }
+
+  /* ---------- 日志 ---------- */
+  .log { background: var(--log-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; line-height: 1.7; color: var(--text-dim); height: 300px; overflow: auto; }
+  .log .ok { color: var(--ok); }
+  .log .er { color: var(--danger); }
+  .log .wn { color: var(--warn); }
+
+  /* ---------- 缩略图网格 ---------- */
+  .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 9px; }
+  .thumb { border: 1px solid var(--border); border-radius: 8px; padding: 7px; background: var(--panel-2); text-align: center; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+  .thumb .ph { height: 58px; border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border); background: var(--panel-3); }
+  .thumb b { color: var(--text); }
+
+  /* ---------- 复选 / 滑块 ---------- */
+  .check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+  .box { width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--border-strong); background: var(--panel); position: relative; flex: 0 0 auto; }
+  .box.on { background: var(--primary); border-color: var(--primary); }
+  .box.on::after { content: "✓"; color: #fff; font-size: 10px; position: absolute; left: 3px; top: -2px; }
+  .slider { position: relative; width: 150px; height: 4px; background: var(--panel-3); border-radius: 2px; }
+  .slider i { position: absolute; left: 0; top: 0; height: 4px; width: 40%; background: var(--primary); border-radius: 2px; }
+  .slider b { position: absolute; left: 40%; top: -6px; width: 16px; height: 16px; margin-left: -8px; background: var(--primary); border-radius: 50%; border: 2px solid var(--panel); }
+
+  /* ---------- 结果 / 提示 ---------- */
+  .result { border: 1px dashed var(--border-strong); border-radius: 8px; padding: 10px 12px; color: var(--text-dim); font-size: 12px; line-height: 1.8; background: var(--panel-2); }
+  .result b { color: var(--primary); }
+  .kw-list { display: flex; flex-direction: column; gap: 7px; }
+
+  /* ---------- 说明卡 ---------- */
+  .note { max-width: 1240px; margin: 18px auto 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text-dim); font-size: 12px; line-height: 1.9; }
+  .note h3 { margin: 0 0 8px; font-size: 13px; color: var(--text); }
+  .note code { background: var(--panel-3); padding: 1px 6px; border-radius: 4px; color: var(--primary); }
+  .note b { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>UI 原型 v2</h1>
+  <div class="seg" id="themeSeg">
+    <button data-set="light" class="active">☀ 浅色（默认）</button>
+    <button data-set="dark">🌙 夜间模式</button>
+  </div>
+  <span class="hint">左右分栏可拖动（真实程序用 QSplitter）· 点 Tab 切页面</span>
+</div>
+
+<div class="window">
+  <div class="titlebar">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span style="margin-left:8px">DeepSeek图片分类工具</span>
+    <div class="tools">
+      <button class="icon-btn" id="titleTheme">🌙 夜间</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="config">配置</div>
+    <div class="tab" data-tab="run">运行</div>
+    <div class="tab" data-tab="eval">评估</div>
+  </div>
+
+  <!-- ==================== 配置页 ==================== -->
+  <div class="page active" id="page-config">
+    <div class="split">
+      <div class="pane left">
+        <div class="pane-title">基础设置</div>
+
+        <div class="group">
+          <div class="gtitle">API 密钥（DeepSeek）</div>
+          <div class="row">
+            <input type="password" class="grow" value="sk-••••••••••••••••••••" />
+            <button class="ghost">显示</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">文件夹</div>
+          <div class="row stack">
+            <label class="lbl">源文件夹:</label>
+            <input type="text" class="grow" value="D:\素材\未整理3" />
+            <button class="sm">浏览</button>
+          </div>
+          <div class="row stack">
+            <label class="lbl">输出目录:</label>
+            <input type="text" class="grow" value="D:\素材\分类结果" />
+            <button class="sm">浏览</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">分类列表</div>
+          <div class="row">
+            <input type="text" class="grow" value="科技;日常;学习;体育;军事;动漫;历史;地理;政治;游戏;经济" />
+          </div>
+          <div class="row"><span class="badge ok">共 11 类</span><span class="badge">用分号隔开</span></div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">图像处理与筛选</div>
+          <div class="row">
+            <span class="check"><span class="box"></span>原图模式（跳过缩图，更慢更贵）</span>
+          </div>
+          <div class="row">
+            <label class="lbl">低置信度阈值:</label>
+            <input type="number" value="0.60" step="0.05" />
+            <span style="color:var(--text-mute);font-size:12px">低于该值 → 待确认</span>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">请求频率与并发</div>
+          <div class="row">
+            <label class="lbl">请求频率:</label>
+            <span class="slider"><i></i><b></b></span>
+            <input type="number" value="120" />
+            <span class="badge ok">120 张/分</span>
+          </div>
+          <div class="row">
+            <label class="lbl">并发数:</label>
+            <input type="number" value="3" />
+            <span style="color:var(--text-mute);font-size:12px">429 频繁时请调低</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane right">
+        <div class="pane-title">分类定义与提示词</div>
+
+        <div class="group">
+          <div class="gtitle">各分类关键词</div>
+          <div class="kw-list">
+            <div class="row" style="margin:0"><label class="lbl">科技:</label><input type="text" class="grow" value="电脑;手机;芯片;AI;数码产品" /></div>
+            <div class="row" style="margin:0"><label class="lbl">日常:</label><input type="text" class="grow" value="美食;宠物;聊天记录;自拍;家庭" /></div>
+            <div class="row" style="margin:0"><label class="lbl">学习:</label><input type="text" class="grow" value="书本;教室;考试;笔记;学生" /></div>
+            <div class="row" style="margin:0"><label class="lbl">体育:</label><input type="text" class="grow" value="运动;球赛;运动员;健身;跑步" /></div>
+            <div class="row" style="margin:0"><label class="lbl">军事:</label><input type="text" class="grow" value="军装;武器;坦克;阅兵;装备" /></div>
+            <div class="row" style="margin:0"><label class="lbl">动漫:</label><input type="text" class="grow" value="二次元;动漫角色;漫画;日系画风" /></div>
+            <div class="row" style="margin:0"><label class="lbl">历史:</label><input type="text" class="grow" value="古代;老照片;文物;历史事件" /></div>
+            <div class="row" style="margin:0"><label class="lbl">地理:</label><input type="text" class="grow" value="地图;地球;山川;自然风光" /></div>
+            <div class="row" style="margin:0"><label class="lbl">政治:</label><input type="text" class="grow" value="领导人;会议;国旗;政府;外交" /></div>
+            <div class="row" style="margin:0"><label class="lbl">游戏:</label><input type="text" class="grow" value="游戏界面;电竞;手柄;网游" /></div>
+            <div class="row" style="margin:0"><label class="lbl">经济:</label><input type="text" class="grow" value="金钱;股票;K线;商业;人民币" /></div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">总提示词模板</div>
+          <div class="row" style="margin-bottom:8px">
+            <span class="badge">{categories}</span><span class="badge">{category_definitions}</span>
+          </div>
+          <textarea rows="9">你是一个图片内容分类助手，所有图片本质上是搞笑/幽默内容。
+请根据图片的【题材】从以下分类中选择最匹配的一个。
+
+分类标准：
+{category_definitions}
+
+判定优先级：题材 > 画风 > 文字信息。
+- 二次元/漫画/表情包画风的图片，只要题材指向明确，按题材归类
+- 「日常」不是兜底类：只有真实生活场景才归日常
+
+置信度分档（严格遵守）：…
+输出格式（仅输出 JSON）：…</textarea>
+          <div class="row" style="margin-top:10px"><button class="sm">恢复默认提示词</button></div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">单张预览测试</div>
+          <div class="row">
+            <input type="text" class="grow" value="D:\素材\测试图.jpg" />
+            <button class="sm">选择图片</button>
+            <button class="primary">▶ 测试</button>
+          </div>
+          <div class="result">
+            分类: <b>科技</b> ｜ 置信度: 0.93 ｜ 耗时: 2.4s<br />
+            关键词: 芯片, CPU, 数码<br />
+            Token: 输入 486 / 输出 42
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 运行页 ==================== -->
+  <div class="page" id="page-run">
+    <div class="split">
+      <div class="pane left wide">
+        <div class="pane-title">运行日志</div>
+
+        <div class="group">
+          <div class="gtitle">进度</div>
+          <div class="progress" style="margin-bottom:10px"><i style="width:46%"></i></div>
+          <div class="row" style="gap:22px">
+            <span class="metric">速度: <b>45.1</b> 张/分</span>
+            <span class="metric">预计剩余: <b>4</b> 分</span>
+            <span class="metric">成功: <b>126</b> ｜ 失败: <b>1</b></span>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">控制</div>
+          <div class="row">
+            <button class="primary">▶ 开始分类</button>
+            <button>⏸ 暂停</button>
+            <button>⏹ 取消</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">日志</div>
+          <div class="log">
+            <div>扫描完成: 共 276 张, 待处理 276 张</div>
+            <div class="ok">[1/276] 1766311984802.jpeg → 科技 (0.95)</div>
+            <div class="ok">[2/276] 1746890456015.jpeg → 政治 (0.88)</div>
+            <div class="wn">[3/276] 1754060855490.png → 低置信度(0.52) 待确认</div>
+            <div class="er">[4/276] 1752124450706.jpeg → 失败: 3次重试均失败</div>
+            <div class="ok">[5/276] wg_1771217886377.jpeg → 历史 (0.91)</div>
+            <div class="ok">[6/276] 1723794282632.jpg → 科技 (0.90)</div>
+            <div class="ok">[7/276] mmexport0636….jpeg → 地理 (0.87)</div>
+            <div class="ok">[8/276] 1746890456015.jpeg → 政治 (0.92)</div>
+            <div class="ok">[9/276] 1782117723299.png → 经济 (0.94)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane right narrow">
+        <div class="pane-title">结果统计</div>
+
+        <div class="group">
+          <div class="gtitle">分类统计</div>
+          <table>
+            <thead><tr><th>类别</th><th>数量</th><th>占比</th></tr></thead>
+            <tbody>
+              <tr><td>政治</td><td>38</td><td>30.2%</td></tr>
+              <tr><td>科技</td><td>29</td><td>23.0%</td></tr>
+              <tr><td>历史</td><td>21</td><td>16.7%</td></tr>
+              <tr><td>军事</td><td>14</td><td>11.1%</td></tr>
+              <tr><td>日常</td><td>11</td><td>8.7%</td></tr>
+              <tr><td><span class="badge warn">待确认</span></td><td>7</td><td>5.6%</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">消耗</div>
+          <div class="row"><span class="metric">总 Token: <b>410,175</b></span></div>
+          <div class="row"><span class="metric">输入 <b>386,208</b> ｜ 输出 <b>23,967</b></span></div>
+          <div class="row"><span class="metric">耗时: <b>6.1 分钟</b></span></div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">操作</div>
+          <div class="row"><button class="sm">打开输出文件夹</button></div>
+          <div class="row"><button class="sm">导出失败列表 CSV</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 评估页 ==================== -->
+  <div class="page" id="page-eval">
+    <div class="split sidebar-left">
+      <div class="pane left">
+        <div class="pane-title">评估设置</div>
+
+        <div class="group">
+          <div class="gtitle">数据集</div>
+          <div class="row stack">
+            <input type="text" class="grow" value="D:\素材\JianyingPro Materials" />
+            <button class="sm">浏览</button>
+          </div>
+          <div class="row">
+            <label class="lbl">每类张数:</label><input type="number" value="15" />
+          </div>
+          <div class="row">
+            <span class="check"><span class="box"></span>全量评估</span>
+            <span class="check"><span class="box on"></span>固定评估集</span>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">评估控制</div>
+          <div class="row">
+            <label class="lbl">评估频率:</label><input type="number" value="120" />
+            <span class="badge">张/分</span>
+          </div>
+          <div class="row">
+            <button class="primary">▶ 开始评估</button><button>⏹ 取消</button>
+          </div>
+          <div class="progress" style="margin-top:10px"><i style="width:100%"></i></div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">历史评估</div>
+          <table>
+            <thead><tr><th>时间</th><th>哈希</th><th>准确率</th></tr></thead>
+            <tbody>
+              <tr><td>14:25:07</td><td>ed014fbb</td><td><b>64.1%</b></td></tr>
+              <tr><td>14:07:32</td><td>ed014fbb</td><td>62.0%</td></tr>
+              <tr><td>13:34:41</td><td>457d4231</td><td>65.6%</td></tr>
+            </tbody>
+          </table>
+          <div class="row" style="margin-top:10px"><button class="sm">对比选中</button><button class="sm">刷新</button></div>
+        </div>
+      </div>
+
+      <div class="pane right">
+        <div class="pane-title">评估结果</div>
+
+        <div class="group">
+          <div class="gtitle">提示词（评估用）</div>
+          <textarea rows="4">你是一个图片内容分类助手…【题材优先 + 置信度分档】</textarea>
+          <div class="row" style="margin-top:9px">
+            <button class="sm">载入配置页</button><button class="sm">保存到配置页</button>
+            <span class="badge">哈希: ed014fbb</span>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">总体指标</div>
+          <div class="metrics">
+            <span class="metric">准确率: <b>64.1%</b> (177/276)</span>
+            <span class="metric">平均置信度: <b>0.874</b></span>
+            <span class="metric">耗时: <b>367s</b></span>
+            <span class="metric">错误: <b>99</b> 张</span>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <span class="badge warn">历史 → 政治 6</span>
+            <span class="badge warn">政治 → 军事 6</span>
+            <span class="badge err">游戏 → 日常 3</span>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">混淆矩阵</div>
+          <table>
+            <thead><tr><th>期望\实际</th><th>体育</th><th>军事</th><th>历史</th><th>政治</th><th>游戏</th><th>合计</th></tr></thead>
+            <tbody>
+              <tr><th>体育</th><td class="hit">16</td><td>0</td><td>0</td><td>3</td><td>0</td><td>22</td></tr>
+              <tr><th>军事</th><td>0</td><td class="hit">21</td><td>3</td><td>2</td><td>2</td><td>30</td></tr>
+              <tr><th>历史</th><td>1</td><td>3</td><td class="hit">15</td><td class="miss">6</td><td>1</td><td>30</td></tr>
+              <tr><th>政治</th><td>1</td><td class="miss">6</td><td>0</td><td class="hit">18</td><td>2</td><td>30</td></tr>
+              <tr><th>游戏</th><td>1</td><td>1</td><td>0</td><td>0</td><td class="hit">6</td><td>13</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="group">
+          <div class="gtitle">错误样本（双击打开原图）</div>
+          <div class="thumbs">
+            <div class="thumb"><div class="ph"></div><b>1754060855490.png</b><br />历史 → 军事 (0.85)</div>
+            <div class="thumb"><div class="ph"></div><b>1746890456015.jpeg</b><br />政治 → 军事 (0.95)</div>
+            <div class="thumb"><div class="ph"></div><b>1752124450706.jpeg</b><br />历史 → 游戏 (0.95)</div>
+            <div class="thumb"><div class="ph"></div><b>mmexport0191….jpeg</b><br />地理 → 动漫 (0.95)</div>
+            <div class="thumb"><div class="ph"></div><b>1723794282632.jpg</b><br />科技 → 政治 (0.85)</div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button class="sm">导出错误 CSV</button><button class="sm">导出结果 JSON</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <h3>这份原型的信息</h3>
+  <b>① 左右分栏</b>：配置页＝左「基础设置」／右「分类定义与提示词」；运行页＝左「进度＋日志」／右「统计与操作」；评估页＝左「设置与历史」／右「结果」。真实程序用 <code>QSplitter</code> 实现，<b>中间分隔线可以拖动</b>调整宽度。<br />
+  <b>② 夜间模式</b>：点右上角「🌙 夜间」或顶部开关切换；真实程序会做成<b>窗口内按钮 + 记住选择</b>（重启后保持）。<br />
+  <b>③ 默认主题</b>：浅色清爽蓝（你选的 ②），夜间为同一设计语言的深色版。<br />
+  <b>④ 可落地性</b>：圆角、聚焦描边、hover 变色、斑马纹表格、徽章等全部是 QSS 能实现的；未使用投影/动画等 Qt 不支持的效果。
+</div>
+
+<script>
+  function setTheme(name) {
+    document.documentElement.setAttribute('data-theme', name);
+    document.querySelectorAll('#themeSeg button').forEach(b => b.classList.toggle('active', b.dataset.set === name));
+    document.getElementById('titleTheme').textContent = name === 'light' ? '🌙 夜间' : '☀ 日间';
+  }
+  document.querySelectorAll('#themeSeg button').forEach(b =>
+    b.addEventListener('click', () => setTheme(b.dataset.set)));
+  document.getElementById('titleTheme').addEventListener('click', () =>
+    setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'));
+  setTheme('light');
+
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('page-' + tab.dataset.tab).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

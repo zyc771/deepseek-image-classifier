@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QHeaderView, QSplitter, QAbstractItemView,
 )
 
+
 from app.eval_store import EvalStore
 from app.evaluator import Evaluator, pick_samples, scan_dataset
 from app.providers import get_provider
@@ -43,7 +44,7 @@ class EvalTab(QWidget):
     # ── UI 构建 ──
     def _build_ui(self):
         outer = QVBoxLayout(self)
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         top = QWidget()
         tl = QVBoxLayout(top)
@@ -90,7 +91,6 @@ class EvalTab(QWidget):
         prow.addWidget(self._hash_label)
         prow.addStretch()
         pl.addLayout(prow)
-        tl.addWidget(g_prompt)
 
         g_ctrl = QGroupBox("评估控制")
         cl = QVBoxLayout(g_ctrl)
@@ -105,6 +105,7 @@ class EvalTab(QWidget):
         cl.addLayout(row_rpm)
         crow = QHBoxLayout()
         self._start_btn = QPushButton("▶ 开始评估")
+        self._start_btn.setObjectName("primary")
         self._start_btn.clicked.connect(self._start)
         crow.addWidget(self._start_btn)
         self._cancel_btn = QPushButton("⏹ 取消")
@@ -144,6 +145,7 @@ class EvalTab(QWidget):
         erow.addWidget(btn_json)
         erow.addStretch()
         rl.addLayout(erow)
+        bl.addWidget(g_prompt)
         bl.addWidget(g_res)
 
         g_hist = QGroupBox("历史评估（选中两行可对比）")
@@ -165,9 +167,10 @@ class EvalTab(QWidget):
         hrow.addWidget(btn_refresh)
         hrow.addStretch()
         hl.addLayout(hrow)
-        bl.addWidget(g_hist)
+        tl.addWidget(g_hist)
 
         splitter.addWidget(bottom)
+        splitter.setSizes([430, 590])
         outer.addWidget(splitter)
 
     # ── 配置注入 ──

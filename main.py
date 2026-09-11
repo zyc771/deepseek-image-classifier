@@ -11,6 +11,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("DeepSeek图片分类工具")
     window = MainWindow()
+    window.apply_current_theme()      # 应用已保存的主题（默认浅色）
     window.show()
     sys.exit(app.exec())
 

@@ -1,26 +1,37 @@
 """主窗口 — 组装配置页、运行页与评估页"""
-from PySide6.QtWidgets import QMainWindow, QTabWidget, QStatusBar, QLabel
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QStatusBar, QLabel, QPushButton
+
 from app.config_tab import ConfigTab
 from app.run_tab import RunTab
 from app.eval_tab import EvalTab
 from app.providers import get_provider
+from app.theme import apply_theme, load_theme, save_theme
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, settings: QSettings = None):
         super().__init__()
         self.setWindowTitle("DeepSeek图片分类工具")
-        self.resize(900, 700)
+        self.resize(1040, 720)
+        self._settings = settings or QSettings("DeepSeekImageClassifier", "Config")
+        self._theme = load_theme(self._settings)
 
-        # 状态栏
+        # 状态栏（含主题切换按钮）
         self._status = QStatusBar()
         self._status_label = QLabel("就绪")
         self._status.addWidget(self._status_label)
+        self._theme_btn = QPushButton()
+        self._theme_btn.setFixedWidth(120)
+        self._theme_btn.setToolTip("切换浅色 / 夜间主题（会记住选择）")
+        self._theme_btn.clicked.connect(self._toggle_theme)
+        self._status.addPermanentWidget(self._theme_btn)
         self.setStatusBar(self._status)
+        self._refresh_theme_btn()
 
         # Tab
         tabs = QTabWidget()
-        self._config_tab = ConfigTab()
+        self._config_tab = ConfigTab(settings=self._settings)
         self._run_tab = RunTab()
         self._eval_tab = EvalTab()
         self._eval_tab.save_to_config = self._config_tab.set_global_prompt
@@ -30,6 +41,28 @@ class MainWindow(QMainWindow):
         tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(tabs)
         self._tabs = tabs
+
+    # ── 主题 ──
+    def _refresh_theme_btn(self):
+        if self._theme == "dark":
+            self._theme_btn.setText("☀ 日间模式")
+        else:
+            self._theme_btn.setText("🌙 夜间模式")
+
+    def _toggle_theme(self):
+        self._theme = "dark" if self._theme == "light" else "light"
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, self._theme)
+        save_theme(self._theme, self._settings)
+        self._refresh_theme_btn()
+
+    def apply_current_theme(self):
+        """启动时调用：应用已保存的主题"""
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, self._theme)
+        self._refresh_theme_btn()
 
     def _on_tab_changed(self, index: int):
         if index == 1:
