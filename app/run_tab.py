@@ -1,13 +1,12 @@
 """运行页 — 进度、日志、结果统计"""
 import csv
 import os
-import subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QPlainTextEdit, QProgressBar, QTableWidget,
     QTableWidgetItem, QHeaderView, QFileDialog, QMessageBox, QSplitter,
 )
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt
 from app.classifier import Classifier
 
 
