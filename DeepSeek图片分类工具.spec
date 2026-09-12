@@ -23,6 +23,7 @@ exe = EXE(
     a.datas,
     [],
     name='DeepSeek图片分类工具',
+    icon='resources/app.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
