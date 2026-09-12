@@ -24,6 +24,7 @@ class RoundConfig:
     model: str
     prompt_text: str            # 已替换过占位符的完整提示词
     categories: list[str] = field(default_factory=list)
+    dataset_root: str = ""      # 仅用于写入记录的元信息
     use_original: bool = False
     rpm: int = 60
     concurrency: int = 3
@@ -129,13 +130,18 @@ def build_record(results: list[tuple[str, str, float, str]], prompt_text: str,
     """results: [(gt, pred, conf, path)] → 评估记录 dict"""
     confusion: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     errors = []
+    samples = []
     correct = 0
     conf_sum = 0.0
 
     for gt, pred, conf, path in results:
         confusion[gt][pred] += 1
         conf_sum += float(conf)
-        if gt == pred:
+        ok = gt == pred
+        # 逐样本明细：阈值曲线/一致率分析需要全部样本，而不只是错误样本
+        samples.append({"path": str(path), "gt": gt, "pred": pred,
+                        "conf": round(float(conf), 4), "ok": ok})
+        if ok:
             correct += 1
         else:
             errors.append({
@@ -160,6 +166,7 @@ def build_record(results: list[tuple[str, str, float, str]], prompt_text: str,
         "total_tokens": total_tokens,
         "confusion": {gt: dict(preds) for gt, preds in confusion.items()},
         "errors": errors,
+        "samples": samples,
     }
 
 

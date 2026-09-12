@@ -270,6 +270,37 @@ class TestBuildRecord:
         assert rec["accuracy"] == 0.0
         assert rec["confusion"]["科技"]["ERROR"] == 1
 
+    def test_records_all_samples_with_confidence(self):
+        """阈值曲线需要全部样本的置信度，而不只是错误的那些"""
+        rec = ev.build_record(
+            results=[("科技", "科技", 0.93, "/d/科技/a.jpg"),
+                     ("科技", "日常", 0.88, "/d/科技/b.jpg"),
+                     ("日常", "日常", 0.41, "/d/日常/c.jpg")],
+            prompt_text="p", dataset_root="d", sample_size=3, elapsed=1.0,
+            total_tokens=0, use_original=False,
+        )
+        assert len(rec["samples"]) == 3
+        assert rec["samples"][0] == {"path": "/d/科技/a.jpg", "gt": "科技",
+                                     "pred": "科技", "conf": 0.93, "ok": True}
+        assert rec["samples"][1]["ok"] is False
+        assert rec["samples"][2]["conf"] == 0.41
+        assert [s["path"] for s in rec["samples"]] == [r[3] for r in
+                                                      [("科技", "科技", 0.93, "/d/科技/a.jpg"),
+                                                       ("科技", "日常", 0.88, "/d/科技/b.jpg"),
+                                                       ("日常", "日常", 0.41, "/d/日常/c.jpg")]]
+
+    def test_samples_feed_threshold_curve(self):
+        """端到端：build_record 的产物必须能直接喂给 eval_stats"""
+        from app import eval_stats as st
+        rec = ev.build_record(
+            results=[("科技", "科技", 0.93, "/a.jpg"), ("科技", "日常", 0.31, "/b.jpg")],
+            prompt_text="p", dataset_root="d", sample_size=2, elapsed=1.0,
+            total_tokens=0, use_original=False,
+        )
+        pick = st.best_threshold([rec], max_correct_block_rate=10.0)
+        assert pick["threshold"] is not None
+        assert pick["blocked_errors"] == 1 and pick["blocked_correct"] == 0
+
     def test_empty_results(self):
         rec = ev.build_record([], "p", "d", 0, 0.0, 0, False)
         assert rec["total"] == 0 and rec["accuracy"] == 0.0
