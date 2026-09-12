@@ -24,8 +24,7 @@ from PySide6.QtWidgets import (
 
 from app.eval_batch import BatchEvaluator, Variant
 from app.eval_stats import (aggregate, best_threshold, group_by_variant,
-                            paired_compare, stability, summarize_text,
-                            threshold_curve)
+                            paired_compare, summarize_text, threshold_curve)
 from app.eval_store import EvalStore
 from app.evaluator import pick_samples, scan_dataset
 from app.providers import get_provider

@@ -1,8 +1,6 @@
 """并发分类测试（monkeypatch 掉真实网络调用）"""
 import time
 
-import pytest
-
 from app.classifier import Classifier
 
 

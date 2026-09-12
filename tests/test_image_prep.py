@@ -1,7 +1,8 @@
 """image_prep 图像预处理测试"""
 import base64
 import io
-from PIL import Image, ImageOps
+import random
+from PIL import Image
 
 from app.image_prep import MAX_SIDE, JPEG_QUALITY, prepare_image
 
@@ -66,3 +67,24 @@ class TestPrepareImage:
         raw = base64.b64decode(b64)
         assert raw.startswith(b"\xff\xd8")  # JPEG SOI 标记
         assert len(raw) > 0
+
+    def test_output_uses_declared_jpeg_quality(self, tmp_path):
+        """回归：输出必须按 JPEG_QUALITY 压缩，而不是悄悄用了更高质量（更贵）"""
+        random.seed(0)
+        img = Image.new("RGB", (200, 200))
+        img.putdata([(random.randrange(256), random.randrange(256), random.randrange(256))
+                     for _ in range(200 * 200)])
+        p = tmp_path / "noise.png"
+        img.save(p)                      # 无需缩图/转色，可与其他质量编码直接比对
+
+        _, b64 = prepare_image(p)
+        got = len(base64.b64decode(b64))
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=JPEG_QUALITY)
+        expected = buf.tell()
+        assert abs(got - expected) / expected < 0.02
+
+        higher = io.BytesIO()
+        img.save(higher, format="JPEG", quality=95)
+        assert got < higher.tell()        # 高频图上 q85 应明显小于 q95

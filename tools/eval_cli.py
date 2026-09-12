@@ -31,9 +31,8 @@ from app.eval_batch import Variant, run_batch
 from app.eval_stats import report_batch
 from app.eval_store import EvalStore
 from app.evaluator import RoundConfig, pick_samples, scan_dataset
-from app.providers import PROVIDERS, get_provider
-
-FAST_EXTRA_BODY = {"thinking": {"type": "disabled"}}
+from app.providers import get_provider
+from app.vlm import FAST_MODE_BODY as FAST_EXTRA_BODY
 
 # 评估用频率：默认高于生产运行频率（配置页那档偏保守，评估没必要那么慢）
 EVAL_RPM_DEFAULT = 120
