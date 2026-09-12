@@ -88,17 +88,25 @@ def build_variants(args, settings) -> list[Variant]:
             if "=" not in spec:
                 raise SystemExit(f"--variant 需要 名称=提示词文件 形式，收到: {spec}")
             name, path = spec.split("=", 1)
-            p = Path(path)
-            if not p.is_file():
-                raise SystemExit(f"提示词文件不存在: {path}")
-            variants.append(Variant(name.strip(), compile_prompt(
-                p.read_text(encoding="utf-8"))))
-        return variants
+            if path == "@config":       # 用配置页当前提示词
+                raw = settings["prompt"]
+            else:
+                p = Path(path)
+                if not p.is_file():
+                    raise SystemExit(f"提示词文件不存在: {path}")
+                raw = p.read_text(encoding="utf-8")
+            variants.append(Variant(name.strip(), compile_prompt(raw)))
+    else:
+        base = Variant("现状", compile_prompt(args.prompt_text or settings["prompt"]))
+        variants = [base]
 
-    base = Variant("现状", compile_prompt(args.prompt_text or settings["prompt"]))
-    if args.compare_fast:
-        return [base, Variant("快速模式", base.prompt_text, FAST_EXTRA_BODY)]
-    return [base]
+    if args.also_fast or args.compare_fast:
+        # 对每个变体再派生一个「关闭思考」的版本，一次跑完交叉对比
+        targets = variants if args.also_fast else variants[:1]
+        variants = variants + [
+            Variant(f"{v.name}+快速", v.prompt_text, FAST_EXTRA_BODY) for v in targets
+        ]
+    return variants
 
 
 def resolve_samples(args, settings, store: EvalStore):
@@ -158,10 +166,12 @@ def main(argv=None) -> int:
                     help="不用固定评估集，按 --per-cat 临时抽样（不落盘）")
     ap.add_argument("--regenerate", action="store_true", help="重建固定评估集（旧清单自动备份）")
     ap.add_argument("--variant", action="append",
-                    help="提示词变体，可重复：--variant 名称=提示词文件.txt")
+                    help="提示词变体，可重复：--variant 名称=提示词文件.txt（文件可写 @config 用配置页的）")
     ap.add_argument("--prompt-text", help="直接指定单变体的提示词（默认用配置页的）")
     ap.add_argument("--compare-fast", action="store_true",
-                    help="对比「现状」与「快速模式（关闭思考）」")
+                    help="对比「现状」与「现状+快速模式（关闭思考）」")
+    ap.add_argument("--also-fast", action="store_true",
+                    help="给每个变体都派生一个关闭思考的版本，一次跑完交叉对比")
     ap.add_argument("--model", help="覆盖模型名")
     ap.add_argument("--rpm", type=int,
                     help=f"覆盖频率（张/分钟，默认 {EVAL_RPM_DEFAULT}，独立于配置页的运行频率）")
