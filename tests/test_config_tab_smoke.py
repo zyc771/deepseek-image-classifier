@@ -132,3 +132,57 @@ def test_speed_settings_ranges_and_persistence(qapp, iso_settings):
     tab2 = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
     assert tab2.get_rpm() == 300
     assert tab2.get_concurrency() == 5
+
+
+class TestEightCategoryDefaults:
+    """P2：默认类别体系切到 8 类（删动漫、史政军合并为史政）"""
+
+    def test_default_categories(self, qapp, iso_settings):
+        tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+        assert tab.get_categories() == ["科技", "日常", "学习", "体育",
+                                        "地理", "游戏", "经济", "史政"]
+
+    def test_removed_categories_absent(self, qapp, iso_settings):
+        cats = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings()).get_categories()
+        for gone in ("动漫", "历史", "政治", "军事"):
+            assert gone not in cats
+
+    def test_merged_keywords_present(self, qapp, iso_settings):
+        kws = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings()).get_category_keywords()
+        assert "史政" in kws
+        assert "老照片" in kws["史政"] and "阅兵" in kws["史政"]
+
+    def test_prompt_has_no_anime_rule(self, qapp, iso_settings):
+        prompt = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings()).get_global_prompt()
+        assert "动漫" not in prompt
+        assert "史政" in prompt
+
+    def test_prompt_keeps_output_format_contract(self, qapp, iso_settings):
+        """回归：提示词必须保留 JSON 输出契约与置信度分档"""
+        prompt = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings()).get_global_prompt()
+        assert '"category"' in prompt and "confidence" in prompt
+        assert "{category_definitions}" in prompt
+
+
+class TestCategoryAlias:
+    def test_default_alias_available(self, qapp, iso_settings):
+        tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+        assert "史政" in tab.get_category_alias()
+
+    def test_mapping_parsed(self, qapp, iso_settings):
+        tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+        m = tab.get_category_mapping()
+        assert m["历史"] == "史政" and m["政治"] == "史政" and m["军事"] == "史政"
+        assert m["动漫"] is None and m["节假日"] is None and m["黄"] is None
+
+    def test_alias_persists(self, qapp, iso_settings):
+        tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+        tab._alias_input.setPlainText("世界 = 地理, 历史")
+        tab.save_settings()
+        tab2 = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+        assert tab2.get_category_mapping() == {"地理": "世界", "历史": "世界"}
+
+    def test_empty_alias_means_no_merging(self, qapp, iso_settings):
+        tab = ConfigTab(settings=_new_settings(), legacy_settings=_old_settings())
+        tab._alias_input.setPlainText("")
+        assert tab.get_category_mapping() == {}

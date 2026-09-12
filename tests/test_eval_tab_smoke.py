@@ -156,3 +156,30 @@ def test_cancel_state_after_empty_record(qapp, tmp_path):
     tab._on_finished([])
     assert "未完成" in tab._metrics_label.text()
     assert tab._history_table.rowCount() == 0
+
+
+class TestCategoryMappingWiring:
+    """P1：评估页必须拿到并透传类别归并映射"""
+
+    def test_set_config_stores_mapping(self, qapp, tmp_path):
+        tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+        tab.set_config("k", "m", ["科技", "史政"], "p", 30, False,
+                       {"史政": "..."}, 3, category_mapping={"历史": "史政", "动漫": None})
+        assert tab._category_mapping == {"历史": "史政", "动漫": None}
+
+    def test_mapping_defaults_to_empty(self, qapp, tmp_path):
+        tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+        assert tab._category_mapping == {}
+
+    def test_plan_label_shows_merging(self, qapp, tmp_path):
+        tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+        tab.set_config("k", "m", ["史政"], "p", 30, False, None, 3,
+                       category_mapping={"历史": "史政", "动漫": None})
+        text = tab._plan_label.text()
+        assert "类别归并" in text
+        assert "历史→史政" in text and "动漫→排除" in text
+
+    def test_plan_label_hides_merging_when_empty(self, qapp, tmp_path):
+        tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+        tab.set_config("k", "m", ["科技"], "p", 30, False)
+        assert "类别归并" not in tab._plan_label.text()

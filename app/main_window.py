@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
                 self._config_tab.get_use_original(),
                 self._config_tab.get_category_keywords(),
                 self._config_tab.get_concurrency(),
+                category_mapping=self._config_tab.get_category_mapping(),
             )
 
     def closeEvent(self, event):

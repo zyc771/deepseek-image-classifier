@@ -63,6 +63,20 @@ class TestTabSync:
         w = _window(qapp, tmp_path)
         assert w._eval_tab._low_conf_value() == w._config_tab.get_low_conf()
 
+    def test_category_alias_reaches_eval_tab(self, qapp, tmp_path):
+        """P1：配置页的类别归并必须一路传到评估页"""
+        w = _window(qapp, tmp_path)
+        w._config_tab._alias_input.setPlainText("史政 = 历史, 政治, 军事\n排除 = 动漫")
+        w._tabs.setCurrentIndex(2)
+        assert w._eval_tab._category_mapping["历史"] == "史政"
+        assert w._eval_tab._category_mapping["动漫"] is None
+
+    def test_empty_alias_reaches_eval_tab_as_empty(self, qapp, tmp_path):
+        w = _window(qapp, tmp_path)
+        w._config_tab._alias_input.setPlainText("")
+        w._tabs.setCurrentIndex(2)
+        assert w._eval_tab._category_mapping == {}
+
     def test_switching_tabs_repeatedly_is_stable(self, qapp, tmp_path):
         w = _window(qapp, tmp_path)
         for idx in (1, 2, 1, 2, 0, 1):

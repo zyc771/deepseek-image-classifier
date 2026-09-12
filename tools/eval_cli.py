@@ -52,19 +52,23 @@ def load_settings():
     """从应用配置读取运行参数（QSettings；缺省回落到 ConfigTab 的默认值）"""
     from PySide6.QtCore import QSettings
 
-    from app.config_tab import (DEFAULT_CATEGORIES, DEFAULT_KEYWORDS,
-                                _as_bool, _parse_categories)
+    from app.category_map import parse_alias
+    from app.config_tab import (DEFAULT_CATEGORIES, DEFAULT_CATEGORY_ALIAS,
+                                DEFAULT_KEYWORDS, _as_bool, _parse_categories)
     from app.secure import decrypt_secret
 
     s = QSettings("DeepSeekImageClassifier", "Config")
     categories = _parse_categories(s.value("categories_raw", DEFAULT_CATEGORIES))
     keywords = {cat: (s.value(cat, "") or DEFAULT_KEYWORDS.get(cat, "")) for cat in categories}
+    alias_text = s.value("category_alias", DEFAULT_CATEGORY_ALIAS) or ""
     return {
         "api_key": decrypt_secret(s.value("keys", "") or ""),
         "model": s.value("model", "") or get_provider("deepseek")["default_model"],
         "categories": categories,
         "keywords": {k: v for k, v in keywords.items() if v},
         "prompt": s.value("global_prompt", "") or "",
+        "category_alias": alias_text,
+        "category_mapping": parse_alias(alias_text),
         "rpm": EVAL_RPM_DEFAULT,          # 评估独立于配置页的运行频率
         "concurrency": int(s.value("concurrency", 3) or 3),
         "use_original": _as_bool(s.value("use_original", False)),
@@ -109,42 +113,47 @@ def build_variants(args, settings) -> list[Variant]:
 
 
 def resolve_samples(args, settings, store: EvalStore):
-    """确定数据集根目录与样本清单
+    """确定数据集根目录与样本清单，返回 `(root, [(标准答案类别, 路径)])`
 
-    优先复用固定评估集（跨版本可比）；`--full` 全量评估时**不落盘**，避免把
-    随手抽的样本覆盖成新的固定评估集。
+    标准答案一律经 `pick_samples`/`gt_from_path` 推导并套用类别归并映射 ——
+    自己拼目录名会漏掉归并与排除规则。
+    优先复用固定评估集（跨版本可比）；`--full` 全量评估时**不落盘**，
+    避免把随手抽的样本覆盖成新的固定评估集。
     """
     root = Path(args.dataset or settings["last_dataset"] or "")
     if not root.is_dir():
         raise SystemExit(f"数据集根目录无效：{root or '(未指定)'}；请用 --dataset 指定")
 
+    cats, mapping = settings["categories"], settings["category_mapping"]
+
+    def collect(fixed=None, full=False):
+        by_cat = scan_dataset(root, cats, mapping)
+        return pick_samples(by_cat, args.per_cat, full, fixed, root, mapping)
+
     if args.full:
-        by_cat = scan_dataset(root, settings["categories"])
-        picked = pick_samples(by_cat, args.per_cat, True, None, root)
+        picked = collect(full=True)
         if not picked:
             raise SystemExit(f"数据集为空：{root} 下未找到与分类名一致的子目录")
-        return root, [str(p) for _, p in picked]
+        return root, picked
 
     fixed = store.load_eval_set(root.name)
     if fixed and not args.no_fixed and not args.regenerate:
-        alive = [p for p in fixed if Path(p).exists()]
-        missing = len(fixed) - len(alive)
+        picked = collect(fixed=[p for p in fixed if Path(p).exists()])
+        missing = len(fixed) - len([p for p in fixed if Path(p).exists()])
         if missing:
             print(f"注意：固定评估集里有 {missing} 个文件已不存在，已跳过", flush=True)
-        if alive:
-            return root, alive
+        if picked:
+            return root, picked
 
     # 临时抽样：不落盘，避免把随手抽的样本固化成新的评估集
     if args.no_fixed and not args.regenerate:
-        by_cat = scan_dataset(root, settings["categories"])
-        picked = pick_samples(by_cat, args.per_cat, False, None, root)
+        picked = collect()
         if not picked:
             raise SystemExit(f"数据集为空：{root} 下未找到与分类名一致的子目录")
         print(f"按每类 {args.per_cat} 张临时抽样 {len(picked)} 张（未写入固定评估集）", flush=True)
-        return root, [str(p) for _, p in picked]
+        return root, picked
 
-    by_cat = scan_dataset(root, settings["categories"])
-    picked = pick_samples(by_cat, args.per_cat, False, None, root)
+    picked = collect()
     if not picked:
         raise SystemExit(f"数据集为空：{root} 下未找到与分类名一致的子目录")
     fixed = [str(p) for _, p in picked]
@@ -152,7 +161,7 @@ def resolve_samples(args, settings, store: EvalStore):
         print("正在重建固定评估集（旧清单已自动备份为 .bak.json）", flush=True)
     store.save_eval_set(root.name, fixed)
     print(f"已生成固定评估集：{len(fixed)} 张 → {store.data_dir()}", flush=True)
-    return root, fixed
+    return root, picked
 
 
 def main(argv=None) -> int:
@@ -178,6 +187,7 @@ def main(argv=None) -> int:
     ap.add_argument("--original", action="store_true", help="强制使用原图（不缩图）")
     ap.add_argument("--budget", type=float, default=10.0,
                     help="阈值建议的误挡率预算%%（默认 10）")
+    ap.add_argument("--alias", help="覆盖类别归并配置（格式：『史政 = 历史, 政治』；传空字符串 = 不归并）")
     ap.add_argument("--no-save", action="store_true", help="不写入评估历史")
     ap.add_argument("--json", dest="json_out", help="把原始记录另存为 JSON")
     args = ap.parse_args(argv)
@@ -197,11 +207,13 @@ def main(argv=None) -> int:
         settings["concurrency"] = args.concurrency
     if args.original:
         settings["use_original"] = True
+    if args.alias is not None:
+        from app.category_map import parse_alias
+        settings["category_alias"] = args.alias
+        settings["category_mapping"] = parse_alias(args.alias)
 
     store = EvalStore()
-    root, fixed = resolve_samples(args, settings, store)
-    samples = [(str(Path(p).relative_to(root).parts[0]) if Path(p).is_relative_to(root)
-                else Path(p).parent.name, Path(p)) for p in fixed]
+    root, samples = resolve_samples(args, settings, store)
     variants = build_variants(args, settings)
 
     cfg = RoundConfig(
@@ -215,6 +227,10 @@ def main(argv=None) -> int:
     print(f"数据集   {root}")
     print(f"样本     {len(samples)} 张 ｜ 变体 "
           f"{'、'.join(v.name for v in variants)} ｜ 轮次 {args.rounds}")
+    print(f"类别     {len(settings['categories'])} 类：{'、'.join(settings['categories'])}")
+    if settings["category_mapping"]:
+        merged = "、".join(f"{s}→{t or '排除'}" for s, t in settings["category_mapping"].items())
+        print(f"类别归并 {merged}")
     print(f"计划请求 {total_requests} 次 ｜ 模型 {settings['model']} ｜ "
           f"并发 {cfg.concurrency} ｜ 频率 {cfg.rpm}/分 ｜ "
           f"{'原图' if cfg.use_original else '缩图'}")

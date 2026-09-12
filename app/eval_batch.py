@@ -124,7 +124,8 @@ class BatchEvaluator(QThread):
     def __init__(self, service: str, api_key: str, model: str, dataset_root: str,
                  categories: list[str], variants: list[Variant], rounds: int = 1,
                  per_category: int = 15, full: bool = False, use_original: bool = False,
-                 rpm: int = 60, fixed: list[str] | None = None, concurrency: int = 3):
+                 rpm: int = 60, fixed: list[str] | None = None, concurrency: int = 3,
+                 category_mapping: dict | None = None):
         super().__init__()
         self._service = service
         self._api_key = api_key
@@ -139,6 +140,7 @@ class BatchEvaluator(QThread):
         self._rpm = rpm
         self._fixed = fixed
         self._concurrency = max(1, int(concurrency or 1))
+        self._category_mapping = category_mapping
         self._cancelled = False
 
     def cancel(self):
@@ -158,9 +160,9 @@ class BatchEvaluator(QThread):
 
     def run(self):
         try:
-            by_cat = scan_dataset(self._root, self._categories)
+            by_cat = scan_dataset(self._root, self._categories, self._category_mapping)
             samples = pick_samples(by_cat, self._per_category, self._full,
-                                   self._fixed, self._root)
+                                   self._fixed, self._root, self._category_mapping)
             if not samples:
                 self.log.emit("数据集为空：请检查根目录下的类别子目录是否与分类名一致")
                 self.finished_batch.emit([])

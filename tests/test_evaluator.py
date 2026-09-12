@@ -93,6 +93,75 @@ class TestSampling:
         assert picked[0][0] == "科技"  # 类别取自父目录名
 
 
+ALIAS = "史政 = 历史, 政治, 军事\n排除 = 动漫, 节假日, 黄"
+
+
+def _merge_dataset(tmp_path: Path) -> Path:
+    root = tmp_path / "ds"
+    for cat, n in (("历史", 2), ("政治", 3), ("军事", 1), ("动漫", 2), ("科技", 2)):
+        d = root / cat
+        d.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            (d / f"{cat}{i}.jpg").write_bytes(b"x")
+    return root
+
+
+class TestCategoryMapping:
+    """评估期类别归并：不改动数据集目录，只映射标准答案"""
+
+    def _mapping(self):
+        from app.category_map import parse_alias
+        return parse_alias(ALIAS)
+
+    def test_scan_collects_merged_sources(self, tmp_path):
+        root = _merge_dataset(tmp_path)
+        by_cat = ev.scan_dataset(root, ["史政", "科技"], self._mapping())
+        assert len(by_cat["史政"]) == 6          # 历史2 + 政治3 + 军事1
+        assert len(by_cat["科技"]) == 2
+
+    def test_scan_excludes_dirs(self, tmp_path):
+        root = _merge_dataset(tmp_path)
+        by_cat = ev.scan_dataset(root, ["史政", "科技"], self._mapping())
+        assert all("动漫" not in str(p) for p in by_cat["科技"])
+        assert "动漫" not in by_cat
+
+    def test_scan_without_mapping_unchanged(self, tmp_path):
+        """回归：不配映射时行为与以前完全一致"""
+        root = _merge_dataset(tmp_path)
+        by_cat = ev.scan_dataset(root, ["历史", "政治", "史政"])
+        assert len(by_cat["历史"]) == 2 and by_cat["史政"] == []
+
+    def test_gt_from_path_maps_to_target(self, tmp_path):
+        root = _merge_dataset(tmp_path)
+        assert ev.gt_from_path(root / "政治" / "政治0.jpg", root, self._mapping()) == "史政"
+
+    def test_gt_from_path_excluded_returns_none(self, tmp_path):
+        root = _merge_dataset(tmp_path)
+        assert ev.gt_from_path(root / "动漫" / "动漫0.jpg", root, self._mapping()) is None
+
+    def test_gt_from_path_uses_top_level_dir(self, tmp_path):
+        root = _merge_dataset(tmp_path)
+        img = root / "历史" / "子目录" / "x.jpg"
+        img.parent.mkdir(parents=True, exist_ok=True)
+        img.write_bytes(b"x")
+        assert ev.gt_from_path(img, root, self._mapping()) == "史政"
+
+    def test_pick_samples_drops_excluded(self, tmp_path):
+        root = _merge_dataset(tmp_path)
+        fixed = [str(root / "历史" / "历史0.jpg"),
+                 str(root / "动漫" / "动漫0.jpg"),
+                 str(root / "政治" / "政治0.jpg")]
+        picked = ev.pick_samples({}, 5, False, fixed, root, self._mapping())
+        assert [gt for gt, _ in picked] == ["史政", "史政"]
+
+    def test_pick_samples_sampling_uses_mapping(self, tmp_path):
+        root = _merge_dataset(tmp_path)
+        by_cat = ev.scan_dataset(root, ["史政"], self._mapping())
+        picked = ev.pick_samples(by_cat, 5, False, None, root, self._mapping())
+        assert len(picked) == 5                   # min(5, 6)
+        assert {gt for gt, _ in picked} == {"史政"}
+
+
 class TestBuildPrompt:
     def test_prompt_includes_category_keywords(self, tmp_path):
         """回归：分类定义必须包含每类关键词"""

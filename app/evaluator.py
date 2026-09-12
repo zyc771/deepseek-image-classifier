@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
+from app.category_map import alias_of, sources_for
 from app.vlm import (RateLimiter, build_prompt_text, classify_image,
                      parse_response, pop_fallback_notices)
 
@@ -82,43 +83,58 @@ def classify_samples(samples: list[tuple[str, Path]], config: RoundConfig,
     return results, total_tokens
 
 
-def scan_dataset(root: Path, categories: list[str]) -> dict[str, list[Path]]:
+def scan_dataset(root: Path, categories: list[str],
+                 mapping: dict | None = None) -> dict[str, list[Path]]:
     """按类别名递归扫描数据集子目录，返回 {类别: [图片路径]}（缺失目录为空列表）
 
     类别目录下可有多层子文件夹（如 历史/2024/week1/x.jpg），标准答案类别
-    始终取一级目录名。
+    始终取一级目录名。`mapping`（`category_map.parse_alias` 的产物）可把若干
+    来源目录归并到一个目标类别（如 历史/政治/军事 → 史政），无需搬移文件。
     """
     by_cat: dict[str, list[Path]] = {}
     for cat in categories:
-        d = Path(root) / cat
-        if d.is_dir():
-            by_cat[cat] = sorted(
-                f for f in d.rglob("*")
-                if f.is_file() and f.suffix.lower() in IMAGE_EXTS
-            )
-        else:
-            by_cat[cat] = []
+        files: list[Path] = []
+        for name in sources_for(cat, mapping):
+            d = Path(root) / name
+            if d.is_dir():
+                files.extend(
+                    f for f in d.rglob("*")
+                    if f.is_file() and f.suffix.lower() in IMAGE_EXTS
+                )
+        by_cat[cat] = sorted(files)
     return by_cat
 
 
-def gt_from_path(path: Path, root: Path) -> str:
-    """从图片路径推导标准答案类别：优先取相对数据集根的第一段目录名"""
+def gt_from_path(path: Path, root: Path, mapping: dict | None = None) -> str | None:
+    """从图片路径推导标准答案类别：优先取相对数据集根的第一段目录名
+
+    经映射后返回目标类别；该目录被标记为「排除」时返回 None（不参与评估）。
+    """
     try:
         rel = path.relative_to(Path(root))
+        cat = rel.parts[0] if len(rel.parts) >= 2 else path.parent.name
     except ValueError:
-        return path.parent.name
-    if len(rel.parts) >= 2:
-        return rel.parts[0]
-    return path.parent.name
+        cat = path.parent.name
+    return alias_of(cat, mapping)
 
 
 def pick_samples(by_cat: dict[str, list[Path]], per_category: int, full: bool,
-                 fixed: list[str] | None, root: Path) -> list[tuple[str, Path]]:
-    """返回 [(标准答案类别, 图片路径)]；fixed 非空时按清单执行（支持子目录内文件）"""
-    if fixed:
-        return [(gt_from_path(Path(item), root), Path(item)) for item in fixed]
+                 fixed: list[str] | None, root: Path,
+                 mapping: dict | None = None) -> list[tuple[str, Path]]:
+    """返回 [(标准答案类别, 图片路径)]；fixed 非空时按清单执行（支持子目录内文件）
 
-    picked: list[tuple[str, Path]] = []
+    被映射为「排除」的目录里的图片会被丢弃。
+    """
+    if fixed:
+        picked: list[tuple[str, Path]] = []
+        for item in fixed:
+            p = Path(item)
+            gt = gt_from_path(p, root, mapping)
+            if gt is not None:
+                picked.append((gt, p))
+        return picked
+
+    picked = []
     for cat, files in by_cat.items():
         if not files:
             continue
@@ -185,7 +201,7 @@ class Evaluator(QThread):
                  categories: list[str], prompt_text: str, per_category: int = 15,
                  full: bool = False, use_original: bool = False, rpm: int = 60,
                  fixed: list[str] | None = None, category_keywords: dict[str, str] | None = None,
-                 concurrency: int = 3):
+                 concurrency: int = 3, category_mapping: dict | None = None):
         super().__init__()
         self._service = service
         self._api_key = api_key
@@ -200,6 +216,7 @@ class Evaluator(QThread):
         self._fixed = fixed
         self._category_keywords = category_keywords or {}
         self._concurrency = max(1, int(concurrency or 1))
+        self._category_mapping = category_mapping
         self._cancelled = False
 
     def cancel(self):
@@ -221,8 +238,9 @@ class Evaluator(QThread):
 
     def run(self):
         try:
-            by_cat = scan_dataset(self._root, self._categories)
-            samples = pick_samples(by_cat, self._per_category, self._full, self._fixed, self._root)
+            by_cat = scan_dataset(self._root, self._categories, self._category_mapping)
+            samples = pick_samples(by_cat, self._per_category, self._full, self._fixed,
+                                   self._root, self._category_mapping)
             total = len(samples)
             if total == 0:
                 self.log.emit("数据集为空：请检查根目录下的类别子目录是否与分类名一致")

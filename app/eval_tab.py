@@ -49,6 +49,7 @@ class EvalTab(QWidget):
         self._use_original = False
         self._category_keywords: dict[str, str] = {}
         self._concurrency = 3
+        self._category_mapping: dict = {}
         self._config_prompt = ""
         self._build_ui()
         self._reload_history()
@@ -251,7 +252,8 @@ class EvalTab(QWidget):
 
     # ── 配置注入 ──
     def set_config(self, api_key, model, categories, global_prompt, rpm, use_original,
-                   category_keywords: dict | None = None, concurrency: int = 3):
+                   category_keywords: dict | None = None, concurrency: int = 3,
+                   category_mapping: dict | None = None):
         self._api_key = api_key
         self._model = model or get_provider("deepseek")["default_model"]
         self._categories = list(categories or [])
@@ -259,6 +261,8 @@ class EvalTab(QWidget):
         self._use_original = bool(use_original)
         self._category_keywords = dict(category_keywords or {})
         self._concurrency = max(1, int(concurrency or 3))
+        self._category_mapping = dict(category_mapping or {})
+        self._update_plan_label()
 
         current = self._prompt_edit.toPlainText()
         # 编辑框为空或仍等于上次载入的配置提示词时才覆盖（避免丢弃临时编辑）
@@ -275,10 +279,17 @@ class EvalTab(QWidget):
     def _update_plan_label(self):
         n_var = self._variant_count()
         rounds = self._rounds_spin.value()
-        self._plan_label.setText(
+        parts = [
             f"计划：{n_var} 个变体 × {rounds} 轮 = 每个样本请求 {n_var * rounds} 次"
-            + ("　（轮内交替执行，抵消时间漂移）" if n_var > 1 and rounds > 1 else "")
-        )
+        ]
+        if n_var > 1 and rounds > 1:
+            parts.append("轮内交替执行，抵消时间漂移")
+        merged = {src: tgt for src, tgt in (self._category_mapping or {}).items()}
+        if merged:
+            m = "、".join(f"{src}→{tgt or '排除'}" for src, tgt in merged.items())
+            parts.append(f"类别归并：{m}")
+        parts.append(f"共 {len(self._categories)} 个类别")
+        self._plan_label.setText("　｜　".join(parts))
 
     def _variant_count(self) -> int:
         n = 2 if self._ab_check.isChecked() else 1
@@ -348,8 +359,9 @@ class EvalTab(QWidget):
         if use_fixed:
             fixed = self._store.load_eval_set(root.name)
             if fixed is None:
-                by_cat = scan_dataset(root, self._categories)
-                picked = pick_samples(by_cat, self._per_cat_spin.value(), False, None, root)
+                by_cat = scan_dataset(root, self._categories, self._category_mapping)
+                picked = pick_samples(by_cat, self._per_cat_spin.value(), False, None, root,
+                                      self._category_mapping)
                 if not picked:
                     QMessageBox.warning(self, "错误", "数据集为空：根目录下未找到与分类名一致的子目录")
                     return
@@ -366,6 +378,7 @@ class EvalTab(QWidget):
             full=self._full_check.isChecked(), use_original=self._use_original,
             rpm=self._eval_rpm_spin.value(), fixed=fixed,
             concurrency=self._concurrency,
+            category_mapping=self._category_mapping,
         )
         self._evaluator.progress.connect(self._on_progress)
         self._evaluator.round_finished.connect(self._on_round_finished)

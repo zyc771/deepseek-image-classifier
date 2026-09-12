@@ -13,31 +13,29 @@ from app.secure import decrypt_secret, encrypt_secret
 SERVICE = "deepseek"
 LEGACY_ORG = "KimiClassifier"
 
-DEFAULT_CATEGORIES = "科技;日常;学习;体育;军事;动漫;历史;地理;政治;游戏;经济"
+DEFAULT_CATEGORIES = "科技;日常;学习;体育;地理;游戏;经济;史政"
 DEFAULT_KEYWORDS = {
     "科技": "电脑;手机;芯片;AI;数码产品",
     "日常": "美食;宠物;聊天记录;自拍;家庭",
     "学习": "书本;教室;考试;笔记;学生",
     "体育": "运动;球赛;运动员;健身;跑步",
-    "军事": "军装;武器;坦克;阅兵;装备",
-    "动漫": "二次元;动漫角色;漫画;日系画风",
-    "历史": "古代;老照片;文物;历史事件",
     "地理": "地图;地球;山川;自然风光",
-    "政治": "领导人;会议;国旗;政府;外交",
     "游戏": "游戏界面;电竞;手柄;网游",
     "经济": "金钱;股票;K线;商业;人民币",
+    "史政": "历史事件;老照片;文物;领导人;会议;国旗;武器;军装;阅兵",
 }
+# 类别归并（仅评估用）：把 历史/政治/军事 三个素材目录当成「史政」一类；
+# 动漫/节假日/黄 不参与评估。素材目录本身不做任何搬移。
+DEFAULT_CATEGORY_ALIAS = "史政 = 历史, 政治, 军事\n排除 = 动漫, 节假日, 黄"
 DEFAULT_GLOBAL_PROMPT = (
     "你是一个图片内容分类助手，所有图片本质上是搞笑/幽默内容。\n"
     "请根据图片的【题材】从以下分类中选择最匹配的一个。\n\n"
     "分类标准：\n{category_definitions}\n\n"
     "判定优先级：题材 > 画风 > 文字信息。\n"
-    "- 二次元/漫画/表情包画风的图片，只要题材指向明确（时政讽刺、军事装备、历史事件），按题材归类；"
-    "「动漫」仅指没有现实题材指向的纯二次元作品。\n"
     "- 「日常」不是兜底类：只有真实生活场景（美食、宠物、自拍、居家、聊天记录）才归日常。\n"
     "  自然风景/山川/地图 → 地理；书本/教室/笔记/学生 → 学习；电脑/手机/数码/芯片 → 科技。\n"
-    "- 历史人物（含近现代）、老照片、文物、年代场景 → 历史；当代时政活动（会议、外交、国旗、政府）→ 政治；"
-    "武器装备、军装、阅兵 → 军事。\n"
+    "- 「史政」涵盖历史、时政与军事：历史人物（含近现代）、老照片、文物、年代场景、"
+    "当代时政活动（会议、外交、国旗、政府）、武器装备、军装、阅兵，都归史政。\n"
     "- 游戏界面/电竞/手柄/网游画面 → 游戏。\n\n"
     "置信度分档（严格遵守）：\n"
     "- 0.90-1.00 主体与题材一眼可辨，无歧义\n"
@@ -129,6 +127,29 @@ class ConfigTab(QWidget):
         self._cat_input.textChanged.connect(self._on_categories_changed)
         gc.addWidget(self._cat_input)
         self._left_layout.addWidget(group_cat)
+
+        # ── 类别归并（评估用）──
+        group_alias = QGroupBox("类别归并（仅影响评估，不改动素材文件夹）")
+        ga = QVBoxLayout(group_alias)
+        hint = QLabel(
+            "把若干素材目录合并成一个评估类别，或把某些目录排除在评估之外。\n"
+            "格式：<目标类别> = <来源目录1>, <来源目录2>；目标写「排除」表示不参与评估。"
+        )
+        hint.setWordWrap(True)
+        ga.addWidget(hint)
+        self._alias_input = QPlainTextEdit()
+        self._alias_input.setPlaceholderText(DEFAULT_CATEGORY_ALIAS)
+        self._alias_input.setMaximumHeight(72)
+        ga.addWidget(self._alias_input)
+        alias_row = QHBoxLayout()
+        btn_alias_default = QPushButton("填入默认")
+        btn_alias_default.clicked.connect(
+            lambda: self._alias_input.setPlainText(DEFAULT_CATEGORY_ALIAS))
+        alias_row.addWidget(btn_alias_default)
+        alias_row.addWidget(QLabel("留空 = 不做任何归并（每个目录各算一类）"))
+        alias_row.addStretch()
+        ga.addLayout(alias_row)
+        self._left_layout.addWidget(group_alias)
 
         # ── 各分类关键词 ──
         group_kw = QGroupBox("各分类关键词（分号隔开）")
@@ -281,6 +302,15 @@ class ConfigTab(QWidget):
     def get_global_prompt(self) -> str:
         return self._prompt_input.toPlainText()
 
+    def get_category_alias(self) -> str:
+        """类别归并配置原文（评估时使用；运行分类不受影响）"""
+        return self._alias_input.toPlainText().strip()
+
+    def get_category_mapping(self) -> dict:
+        """解析后的归并映射 `{源目录名: 目标类别 | None}`"""
+        from app.category_map import parse_alias
+        return parse_alias(self.get_category_alias())
+
     def set_global_prompt(self, text: str):
         """由评估页回写提示词"""
         self._prompt_input.setPlainText(text)
@@ -319,6 +349,7 @@ class ConfigTab(QWidget):
         s.setValue("output_dir", self.get_output_dir())
         s.setValue("categories_raw", self._cat_input.text())
         s.setValue("global_prompt", self.get_global_prompt())
+        s.setValue("category_alias", self.get_category_alias())
         s.setValue("rpm", self.get_rpm())
         s.setValue("concurrency", self.get_concurrency())
         s.setValue("use_original", self.get_use_original())
@@ -367,6 +398,8 @@ class ConfigTab(QWidget):
         self._out_input.setText(s.value("output_dir", ""))
         self._cat_input.setText(s.value("categories_raw", DEFAULT_CATEGORIES))
         self._prompt_input.setPlainText(s.value("global_prompt", DEFAULT_GLOBAL_PROMPT))
+        # 旧配置里没有这一项 → 填入默认归并，让评估在 8 类体系下直接可用
+        self._alias_input.setPlainText(s.value("category_alias", DEFAULT_CATEGORY_ALIAS))
         rpm = int(s.value("rpm", DEFAULT_RPM))
         self._rpm_slider.setValue(rpm)
         self._rpm_spin.setValue(rpm)
