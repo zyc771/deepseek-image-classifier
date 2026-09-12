@@ -221,6 +221,22 @@ class TestReportBatch:
         recs = [r for r in self._recs() if r["variant"] == "A"]
         assert "配对" not in st.report_batch(recs)
 
+    def test_four_variants_compare_all_pairs(self):
+        """多变体时必须两两都比较 —— 只比第一对会漏掉真正的结论"""
+        recs = self._recs()
+        for r in recs:
+            if r["variant"] == "B":
+                r["variant"] = "C"          # 造出 A / C 两个变体再加两个
+        extra = []
+        for name in ("D", "E"):
+            for r in recs[:2]:
+                clone = dict(r, variant=name, id=f"{name}{r['id']}")
+                extra.append(clone)
+        text = st.report_batch(recs + extra)
+        for pair in ("A", "C", "D", "E"):
+            assert pair in text
+        assert text.count("vs") >= 6        # 4 个变体 → 6 对比较
+
     def test_empty_records(self):
         assert "暂无" in st.report_batch([])
 

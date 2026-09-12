@@ -348,20 +348,26 @@ def report_batch(records: list[dict], max_correct_block_rate: float = 10.0) -> s
             else:
                 lines.append(f"    → {pick.get('reason', '无法给出建议阈值')}")
 
-    if len(groups) == 2:
-        (na, ra), (nb, rb) = list(groups.items())
-        cmp = paired_compare(ra, rb)
+    if len(groups) >= 2:
+        names = list(groups)
         lines.append("")
-        lines.append(f"── 配对比较「{na}」→「{nb}」──")
-        lines.append(f"  配对样本 {cmp['pairs']} 张 ｜ {na} {cmp['a']['accuracy_mean']:.1f}%"
-                     f" vs {nb} {cmp['b']['accuracy_mean']:.1f}%"
-                     f"（差 {cmp['delta']:+.1f}pt）")
-        lines.append(f"  都对 {cmp['both_ok']} ｜ 只{na}对 {cmp['discordant']['a_only']}"
-                     f" ｜ 只{nb}对 {cmp['discordant']['b_only']} ｜ 都错 {cmp['both_bad']}")
-        verdict = "显著" if cmp["significant"] else "不显著（差异在噪声内，无法判定）"
-        lines.append(f"  二项检验 p = {cmp['p_value']:.3f} → {verdict}")
-        worse = sorted(cmp["per_class"].items(), key=lambda kv: kv[1]["delta"])[:3]
-        if worse:
-            lines.append("  逐类变化最差的三类: " + " ｜ ".join(
-                f"{cat} {c['delta']:+.1f}pt(n={c['n']})" for cat, c in worse))
+        lines.append("── 配对比较（按同一张图，二项检验）──")
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                na, nb = names[i], names[j]
+                cmp = paired_compare(groups[na], groups[nb])
+                verdict = ("显著" if cmp["significant"]
+                           else f"不显著（p={cmp['p_value']:.3f}，差异在噪声内）")
+                lines.append(
+                    f"  {na} {cmp['a']['accuracy_mean']:.1f}%  vs  {nb} "
+                    f"{cmp['b']['accuracy_mean']:.1f}%  →  {cmp['delta']:+.1f}pt"
+                )
+                lines.append(
+                    f"    配对 {cmp['pairs']} 张 ｜ 只{na}对 {cmp['discordant']['a_only']}"
+                    f" ｜ 只{nb}对 {cmp['discordant']['b_only']}"
+                    f" ｜ 都错 {cmp['both_bad']}  →  {verdict}"
+                )
+        if len(names) >= 3:
+            lines.append("  提示：多个条件指向同一结论时，可把各自的不一致对数相加再看方向"
+                         "（各条件相互独立才可合并）")
     return "\n".join(lines)
