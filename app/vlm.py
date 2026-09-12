@@ -15,6 +15,11 @@ from app.providers import get_provider
 
 RETRY_TIMES = 3
 
+# 快速模式：关闭模型思考。实测输出 token 600→35、单张延迟 3.99s→0.90s（约 4.4 倍），
+# 在 60 张难图上未检出准确率差异（配对 14:17，p=0.72）——但样本量不足以证明等价，
+# 因此默认关闭，由用户自行权衡后开启。服务端若不支持该参数会自动降级。
+FAST_MODE_BODY = {"thinking": {"type": "disabled"}}
+
 # 服务端明确拒绝（参数不存在/不支持）的状态码
 _PARAM_REJECT_CODES = {400, 404, 422}
 

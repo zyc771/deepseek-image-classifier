@@ -10,7 +10,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from app.vlm import RateLimiter, build_prompt_text, classify_image, parse_response
+from app.vlm import (RateLimiter, build_prompt_text, classify_image,
+                     parse_response, pop_fallback_notices)
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
@@ -71,6 +72,9 @@ def classify_samples(samples: list[tuple[str, Path]], config: RoundConfig,
             total_tokens += tokens
             if err and on_log:
                 on_log(f"[{done}/{len(samples)}] {Path(path_str).name} → 失败: {err[:50]}")
+            if on_log:
+                for notice in pop_fallback_notices():
+                    on_log(f"提示：{notice}")
             results.append((gt, pred, conf, path_str))
             if on_progress:
                 on_progress(done, len(samples), Path(path_str).name, pred, conf)

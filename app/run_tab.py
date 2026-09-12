@@ -109,9 +109,9 @@ class RunTab(QWidget):
         self._start_time = None
 
     def set_config(self, api_key, src, out, categories, global_prompt, category_keywords, rpm,
-                   use_original=False, low_conf=0.6, concurrency=3):
+                   use_original=False, low_conf=0.6, concurrency=3, fast_mode=False):
         self._config = (api_key, src, out, categories, global_prompt, category_keywords, rpm,
-                        use_original, low_conf, concurrency)
+                        use_original, low_conf, concurrency, fast_mode)
         self._output_dir = out
 
     # ── 分类控制 ──
@@ -120,7 +120,7 @@ class RunTab(QWidget):
             QMessageBox.warning(self, "提示", "分类正在进行中，请先等待完成或取消")
             return
         (api_key, src, out, categories, global_prompt, category_keywords, rpm,
-         use_original, low_conf, concurrency) = self._config
+         use_original, low_conf, concurrency, fast_mode) = self._config
         if not api_key:
             QMessageBox.warning(self, "错误", "请先在配置页输入 API 密钥")
             return
@@ -142,7 +142,7 @@ class RunTab(QWidget):
             "deepseek", api_key, get_provider("deepseek")["default_model"],
             src, out, categories, global_prompt, category_keywords, rpm,
             use_original=use_original, low_conf_threshold=low_conf,
-            concurrency=concurrency,
+            concurrency=concurrency, fast_mode=fast_mode,
         )
         self._classifier.signals.scan_done.connect(self._on_scan)
         self._classifier.signals.progress.connect(self._on_progress)

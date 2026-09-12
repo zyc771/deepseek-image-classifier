@@ -204,6 +204,15 @@ class ConfigTab(QWidget):
         row5.addWidget(QLabel("（同时发送的请求数，越高越快；429 频繁时请调低）"))
         row5.addStretch()
         gm.addLayout(row5)
+
+        self._fast_check = QCheckBox(
+            "快速模式（关闭模型思考：实测单张 3.99s→0.90s、输出 token 少 17 倍；"
+            "在 60 张难图上未检出准确率差异，但样本量不足以证明等价 —— 追求准确率时请关闭）"
+        )
+        self._fast_check.setToolTip(
+            "关闭模型思考（thinking）。服务端若不支持该参数会自动降级并提示。"
+        )
+        gm.addWidget(self._fast_check)
         self._left_layout.addWidget(group_model)
 
         # ── 单张测试 ──
@@ -288,6 +297,9 @@ class ConfigTab(QWidget):
     def get_low_conf(self) -> float:
         return self._low_conf_spin.value()
 
+    def get_fast_mode(self) -> bool:
+        return self._fast_check.isChecked()
+
     def set_preview_result(self, category, confidence, keywords, raw, pt, ct, elapsed):
         kw_str = ", ".join(keywords) if keywords else "无"
         text = (
@@ -311,6 +323,7 @@ class ConfigTab(QWidget):
         s.setValue("concurrency", self.get_concurrency())
         s.setValue("use_original", self.get_use_original())
         s.setValue("low_conf_threshold", self.get_low_conf())
+        s.setValue("fast_mode", self.get_fast_mode())
         # 保存每类关键词
         s.remove("kw")
         s.beginGroup("kw")
@@ -360,6 +373,7 @@ class ConfigTab(QWidget):
         self._conc_spin.setValue(int(s.value("concurrency", DEFAULT_CONCURRENCY)))
         self._original_check.setChecked(_as_bool(s.value("use_original", False)))
         self._low_conf_spin.setValue(float(s.value("low_conf_threshold", 0.6)))
+        self._fast_check.setChecked(_as_bool(s.value("fast_mode", False)))
         self._on_categories_changed(self._cat_input.text())
         s.beginGroup("kw")
         for cat in self._kw_inputs:
@@ -433,6 +447,7 @@ class ConfigTab(QWidget):
             rpm=self.get_rpm(),
             use_original=self.get_use_original(),
             low_conf_threshold=self.get_low_conf(),
+            fast_mode=self.get_fast_mode(),
         )
         self._preview_clf.signals.preview_done.connect(self._on_preview_done)
         self._preview_clf.signals.log.connect(lambda msg: self._preview_result.setText(msg))

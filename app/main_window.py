@@ -35,6 +35,7 @@ class MainWindow(QMainWindow):
         self._run_tab = RunTab()
         self._eval_tab = EvalTab()
         self._eval_tab.save_to_config = self._config_tab.set_global_prompt
+        self._eval_tab.get_current_threshold = self._config_tab.get_low_conf
         tabs.addTab(self._config_tab, "配置")
         tabs.addTab(self._run_tab, "运行")
         tabs.addTab(self._eval_tab, "评估")
@@ -79,6 +80,7 @@ class MainWindow(QMainWindow):
                 self._config_tab.get_use_original(),
                 self._config_tab.get_low_conf(),
                 self._config_tab.get_concurrency(),
+                self._config_tab.get_fast_mode(),
             )
             self._run_tab.set_config(*cfg)
             self._status_label.setText(
