@@ -3,7 +3,8 @@ import hashlib
 import random
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,68 @@ from PySide6.QtCore import QThread, Signal
 from app.vlm import RateLimiter, build_prompt_text, classify_image, parse_response
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
+
+
+@dataclass
+class RoundConfig:
+    """一轮评估所需的全部请求参数（纯数据，便于测试与命令行复用）"""
+
+    service: str
+    api_key: str
+    model: str
+    prompt_text: str            # 已替换过占位符的完整提示词
+    categories: list[str] = field(default_factory=list)
+    use_original: bool = False
+    rpm: int = 60
+    concurrency: int = 3
+    extra_body: dict | None = None   # 附加请求参数（快速模式的 thinking 开关）
+
+
+def classify_samples(samples: list[tuple[str, Path]], config: RoundConfig,
+                     should_cancel=None, on_progress=None, on_log=None
+                     ) -> tuple[list[tuple[str, str, float, str]], int]:
+    """并发分类样本，返回 (results, total_tokens)
+
+    results 顺序与 samples 一致（`[(gt, pred, conf, path_str)]`），便于跨轮/跨变体
+    按同一张图做配对比较。单张失败记为 pred="ERROR"，不计入 token。
+    """
+    results: list[tuple[str, str, float, str]] = []
+    total_tokens = 0
+    done = 0
+    limiter = RateLimiter(config.rpm)
+    workers = max(1, int(config.concurrency or 1))
+
+    def work(sample: tuple[str, Path]):
+        gt, path = sample
+        if should_cancel and should_cancel():
+            return None
+        limiter.acquire()
+        if should_cancel and should_cancel():
+            return None
+        try:
+            raw, pt, ct = classify_image(
+                config.service, config.api_key, config.model, path,
+                config.prompt_text, config.use_original, config.extra_body,
+            )
+            pred, conf, _ = parse_response(raw, config.categories)
+            return gt, pred, conf, str(path), pt + ct, None
+        except Exception as e:
+            return gt, "ERROR", 0.0, str(path), 0, str(e)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for outcome in pool.map(work, samples):
+            if outcome is None:
+                continue
+            gt, pred, conf, path_str, tokens, err = outcome
+            done += 1
+            total_tokens += tokens
+            if err and on_log:
+                on_log(f"[{done}/{len(samples)}] {Path(path_str).name} → 失败: {err[:50]}")
+            results.append((gt, pred, conf, path_str))
+            if on_progress:
+                on_progress(done, len(samples), Path(path_str).name, pred, conf)
+
+    return results, total_tokens
 
 
 def scan_dataset(root: Path, categories: list[str]) -> dict[str, list[Path]]:
@@ -136,23 +199,14 @@ class Evaluator(QThread):
         """构建评估用提示词（含分类定义）"""
         return build_prompt_text(self._prompt_text, self._categories, self._category_keywords)
 
-    def _evaluate_one(self, sample: tuple[str, Path], prompt_text: str, limiter: RateLimiter):
-        """工作线程任务：限速 → 分类 → 解析；返回 (gt, pred, conf, path, tokens)"""
-        gt, path = sample
-        if self._cancelled:
-            return None
-        limiter.acquire()
-        if self._cancelled:
-            return None
-        try:
-            raw, pt, ct = classify_image(
-                self._service, self._api_key, self._model, path,
-                prompt_text, self._use_original,
-            )
-            pred, conf, _ = parse_response(raw, self._categories)
-            return gt, pred, conf, str(path), pt + ct, None
-        except Exception as e:
-            return gt, "ERROR", 0.0, str(path), 0, str(e)
+    def _round_config(self, prompt_text: str, extra_body: dict | None = None) -> RoundConfig:
+        """把线程持有的配置打包成纯数据 RoundConfig"""
+        return RoundConfig(
+            service=self._service, api_key=self._api_key, model=self._model,
+            prompt_text=prompt_text, categories=list(self._categories),
+            use_original=self._use_original, rpm=self._rpm,
+            concurrency=self._concurrency, extra_body=extra_body,
+        )
 
     def run(self):
         try:
@@ -165,28 +219,13 @@ class Evaluator(QThread):
                 return
 
             prompt_text = self.build_prompt()
-            results: list[tuple[str, str, float, str]] = []
-            total_tokens = 0
-            done = 0
             start = time.time()
-            limiter = RateLimiter(self._rpm)
-
-            with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
-                future_map = {
-                    pool.submit(self._evaluate_one, sample, prompt_text, limiter): sample
-                    for sample in samples
-                }
-                for fut in as_completed(future_map):
-                    outcome = fut.result()
-                    if outcome is None:
-                        continue
-                    gt, pred, conf, path_str, tokens, err = outcome
-                    done += 1
-                    total_tokens += tokens
-                    if err:
-                        self.log.emit(f"[{done}/{total}] {Path(path_str).name} → 失败: {err[:50]}")
-                    results.append((gt, pred, conf, path_str))
-                    self.progress.emit(done, total, Path(path_str).name, pred, conf)
+            results, total_tokens = classify_samples(
+                samples, self._round_config(prompt_text),
+                should_cancel=lambda: self._cancelled,
+                on_progress=self.progress.emit,
+                on_log=self.log.emit,
+            )
 
             if self._cancelled:
                 self.log.emit("已取消（本次结果不保存）")
@@ -198,9 +237,6 @@ class Evaluator(QThread):
                 time.time() - start, total_tokens, self._use_original,
             )
             self.finished_record.emit(record)
-        except Exception as e:
-            self.log.emit(f"评估异常: {e}")
-            self.finished_record.emit({})
         except Exception as e:
             self.log.emit(f"评估异常: {e}")
             self.finished_record.emit({})

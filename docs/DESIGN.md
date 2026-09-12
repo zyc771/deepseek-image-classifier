@@ -5,7 +5,7 @@
 ## 定位
 
 `image-classifier-gui`（Kimi / DeepSeek 双服务商版）的 **DeepSeek 单模型版**：
-界面更简洁、固定使用 DeepSeek 视觉模型（`deepseek-v4-flash-vision-exp`），保留评估实验室。
+界面更简洁、固定使用 DeepSeek 视觉模型（`deepseek-flash`），保留评估实验室。
 
 ## 架构
 
