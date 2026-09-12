@@ -182,6 +182,49 @@ class TestPairedCompare:
         assert flips[0]["a"] == "日常" and flips[0]["b"] == "科技"
 
 
+class TestGroupByVariant:
+    def test_groups_preserving_order(self):
+        recs = [_rec(0, [], rid="a"), _rec(0, [], rid="b")]
+        recs[0]["variant"], recs[1]["variant"] = "A", "B"
+        groups = st.group_by_variant(recs)
+        assert list(groups) == ["A", "B"]
+
+    def test_missing_variant_falls_back(self):
+        r = _rec(0, [])
+        assert list(st.group_by_variant([r])) == ["（未标记）"]
+
+    def test_empty(self):
+        assert st.group_by_variant([]) == {}
+
+
+class TestReportBatch:
+    def _recs(self):
+        a1 = _rec(0, [_s("/1", "科技", "科技", .9), _s("/2", "科技", "日常", .9)], rid="a1")
+        a2 = _rec(0, [_s("/1", "科技", "科技", .9), _s("/2", "科技", "日常", .9)], rid="a2")
+        b1 = _rec(0, [_s("/1", "科技", "科技", .9), _s("/2", "科技", "科技", .9)], rid="b1")
+        b2 = _rec(0, [_s("/1", "科技", "科技", .9), _s("/2", "科技", "科技", .9)], rid="b2")
+        for r in (a1, a2):
+            r["variant"] = "A"
+        for r in (b1, b2):
+            r["variant"] = "B"
+        return [a1, b1, a2, b2]
+
+    def test_mentions_every_variant(self):
+        text = st.report_batch(self._recs())
+        assert "A" in text and "B" in text
+
+    def test_includes_paired_section_for_two_variants(self):
+        text = st.report_batch(self._recs())
+        assert "配对" in text
+
+    def test_single_variant_has_no_paired_section(self):
+        recs = [r for r in self._recs() if r["variant"] == "A"]
+        assert "配对" not in st.report_batch(recs)
+
+    def test_empty_records(self):
+        assert "暂无" in st.report_batch([])
+
+
 class TestBinomialP:
     def test_balanced_is_one(self):
         assert st.binom_two_sided_p(5, 10) == pytest.approx(1.0)

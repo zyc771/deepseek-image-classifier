@@ -288,7 +288,7 @@ def summarize_text(records: list[dict]) -> str:
         f"（极差 {agg['accuracy_range']:.1f}pt）",
     ]
     stab = stability(records)
-    if stab["available"]:
+    if stab["available"] and stab["rounds"] >= 2:
         lines.append(
             f"跨轮一致 {stab['unanimous_rate']:.1f}% ｜ 多数投票准确率 {stab['majority_accuracy']:.1f}%"
             f"（单轮均值 {stab['single_round_accuracy']:.1f}%，"
@@ -300,4 +300,68 @@ def summarize_text(records: list[dict]) -> str:
             f"一致组准确率 {unan.get('accuracy', 0):.1f}%（占 {unan.get('share', 0):.1f}%）"
             f" vs 分歧组 {spl.get('accuracy', 0):.1f}%（占 {spl.get('share', 0):.1f}%）"
         )
+    return "\n".join(lines)
+
+
+def group_by_variant(records: list[dict]) -> dict[str, list[dict]]:
+    """按 variant 字段分组，保持首次出现顺序"""
+    groups: dict[str, list[dict]] = {}
+    for r in records or []:
+        if not r:
+            continue
+        groups.setdefault(r.get("variant") or "（未标记）", []).append(r)
+    return groups
+
+
+def report_batch(records: list[dict], max_correct_block_rate: float = 10.0) -> str:
+    """多轮/多变体的完整文字报告（命令行与界面共用）"""
+    records = [r for r in (records or []) if r]
+    if not records:
+        return "暂无评估记录"
+
+    groups = group_by_variant(records)
+    lines: list[str] = []
+    for name, recs in groups.items():
+        agg = aggregate(recs)
+        lines.append(f"── 变体「{name}」({agg['rounds']} 轮) ──")
+        lines.append("  " + summarize_text(recs).replace("\n", "\n  "))
+        lines.append(f"  耗时合计 {sum(float(r.get('elapsed_seconds', 0) or 0) for r in recs):.0f}s "
+                     f"｜ token {agg['total_tokens']:,}")
+
+        rows = threshold_curve(recs)
+        if rows:
+            pick = best_threshold(recs, max_correct_block_rate, rows and None)
+            lines.append("  阈值扫描（置信度低于阈值 → 分流「待确认」）:")
+            lines.append(f"    {'阈值':>6}{'挡错':>6}{'误挡':>6}{'挡错率':>8}"
+                         f"{'误挡率':>8}{'分流精度':>9}{'保留准确率':>11}")
+            for row in rows:
+                if row["threshold"] not in (0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90):
+                    continue
+                lines.append(
+                    f"    {row['threshold']:>6.2f}{row['blocked_errors']:>6}{row['blocked_correct']:>6}"
+                    f"{row['error_block_rate']:>7.1f}%{row['correct_block_rate']:>7.1f}%"
+                    f"{row['bucket_precision']:>8.1f}%{row['kept_accuracy']:>10.1f}%"
+                )
+            if pick.get("threshold") is not None:
+                lines.append(f"    → 建议阈值 {pick['threshold']:.2f}"
+                             f"（挡错 {pick['blocked_errors']}、误挡 {pick['blocked_correct']}）")
+            else:
+                lines.append(f"    → {pick.get('reason', '无法给出建议阈值')}")
+
+    if len(groups) == 2:
+        (na, ra), (nb, rb) = list(groups.items())
+        cmp = paired_compare(ra, rb)
+        lines.append("")
+        lines.append(f"── 配对比较「{na}」→「{nb}」──")
+        lines.append(f"  配对样本 {cmp['pairs']} 张 ｜ {na} {cmp['a']['accuracy_mean']:.1f}%"
+                     f" vs {nb} {cmp['b']['accuracy_mean']:.1f}%"
+                     f"（差 {cmp['delta']:+.1f}pt）")
+        lines.append(f"  都对 {cmp['both_ok']} ｜ 只{na}对 {cmp['discordant']['a_only']}"
+                     f" ｜ 只{nb}对 {cmp['discordant']['b_only']} ｜ 都错 {cmp['both_bad']}")
+        verdict = "显著" if cmp["significant"] else "不显著（差异在噪声内，无法判定）"
+        lines.append(f"  二项检验 p = {cmp['p_value']:.3f} → {verdict}")
+        worse = sorted(cmp["per_class"].items(), key=lambda kv: kv[1]["delta"])[:3]
+        if worse:
+            lines.append("  逐类变化最差的三类: " + " ｜ ".join(
+                f"{cat} {c['delta']:+.1f}pt(n={c['n']})" for cat, c in worse))
     return "\n".join(lines)

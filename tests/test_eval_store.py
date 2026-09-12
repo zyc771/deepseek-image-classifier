@@ -20,6 +20,21 @@ class TestEvalSet:
         s.save_eval_set("my set/../x", ["p.jpg"])
         assert s.load_eval_set("my set/../x") == ["p.jpg"]
 
+    def test_overwrite_backs_up_previous(self, tmp_path):
+        """重建固定评估集不得无声丢弃旧清单（跨版本可比性依赖它）"""
+        s = _store(tmp_path)
+        s.save_eval_set("ds", ["old1.jpg", "old2.jpg"])
+        s.save_eval_set("ds", ["new.jpg"])
+        assert s.load_eval_set("ds") == ["new.jpg"]
+        bak = s.data_dir() / "eval_set_ds.bak.json"
+        assert bak.exists()
+        assert "old1.jpg" in bak.read_text(encoding="utf-8")
+
+    def test_first_save_makes_no_backup(self, tmp_path):
+        s = _store(tmp_path)
+        s.save_eval_set("fresh", ["a.jpg"])
+        assert not (s.data_dir() / "eval_set_fresh.bak.json").exists()
+
 
 class TestRuns:
     def _record(self, run_id="20260909-120000", acc=50.0):

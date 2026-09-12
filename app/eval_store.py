@@ -31,6 +31,11 @@ class EvalStore:
 
     def save_eval_set(self, name: str, items: list[str]) -> Path:
         p = self._set_path(name)
+        if p.exists():                      # 覆盖旧评估集前自动留一份备份
+            try:
+                p.replace(p.with_suffix(".bak.json"))
+            except OSError:
+                pass
         p.write_text(json.dumps(list(items), ensure_ascii=False, indent=2), encoding="utf-8")
         return p
 
