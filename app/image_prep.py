@@ -8,6 +8,7 @@
 """
 import base64
 import io
+import warnings
 from pathlib import Path
 from PIL import Image, ImageOps
 
@@ -21,6 +22,13 @@ def prepare_image(filepath: Path) -> tuple[str, str]:
     流程：exif_transpose 校正方向 → 仅当最大边 > MAX_SIDE 时 LANCZOS 缩图
     → RGBA/LA/P 透明合成白底 → JPEG(quality=JPEG_QUALITY) → base64
     """
+    with warnings.catch_warnings():
+        # 部分素材 EXIF 损坏，Pillow 只告警且能正常解码；命令行不该被噪声刷屏
+        warnings.filterwarnings("ignore", category=UserWarning, module="PIL")
+        return _prepare(filepath)
+
+
+def _prepare(filepath: Path) -> tuple[str, str]:
     img = Image.open(filepath)
     img = ImageOps.exif_transpose(img)
 

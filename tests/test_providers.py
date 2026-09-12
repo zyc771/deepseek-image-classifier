@@ -13,7 +13,11 @@ class TestProviders:
     def test_deepseek_endpoint_and_model(self):
         p = get_provider("deepseek")
         assert p["endpoint"] == "https://api.deepseek.com/chat/completions"
-        assert p["default_model"] == "deepseek-v4-flash-vision-exp"
+        assert p["default_model"] == "deepseek-flash"
+
+    def test_default_model_is_not_retired_alias(self):
+        """回归：旧名 deepseek-v4-flash-vision-exp 已退役，不得再作为默认值"""
+        assert "vision-exp" not in get_provider("deepseek")["default_model"]
 
     def test_kimi_endpoint_and_model(self):
         p = get_provider("kimi")

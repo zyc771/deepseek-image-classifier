@@ -3,7 +3,7 @@ PROVIDERS: dict[str, dict] = {
     "deepseek": {
         "label": "DeepSeek",
         "endpoint": "https://api.deepseek.com/chat/completions",
-        "default_model": "deepseek-v4-flash-vision-exp",
+        "default_model": "deepseek-flash",
     },
     "kimi": {
         "label": "Kimi (Moonshot)",

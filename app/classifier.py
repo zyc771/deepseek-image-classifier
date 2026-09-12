@@ -69,7 +69,7 @@ class Classifier(QThread):
     def __init__(self, service: str, api_key: str, model: str, source_dir: str, output_dir: str,
                  categories: list[str], global_prompt: str, category_keywords: dict[str, str] = None,
                  rpm: int = 30, use_original: bool = False, low_conf_threshold: float = 0.6,
-                 concurrency: int = 3):
+                 concurrency: int = 3, fast_mode: bool = False):
         super().__init__()
         self.signals = ClassifierSignals()
         self._service = service
@@ -84,6 +84,7 @@ class Classifier(QThread):
         self._use_original = use_original
         self._low_conf_threshold = low_conf_threshold
         self._concurrency = max(1, int(concurrency or 1))
+        self._fast_mode = bool(fast_mode)
 
         self._paused = False
         self._cancelled = False
@@ -105,6 +106,7 @@ class Classifier(QThread):
 
     def run(self):
         """主入口"""
+        self._drain_fallback_notices()      # 清掉上一次运行残留的降级提示
         # 扫描（递归包含子文件夹）
         images = scan_images(self._source_dir)
         self.signals.scan_done.emit(len(images), len(images))
@@ -160,8 +162,10 @@ class Classifier(QThread):
                         done, pending_count, img.name, "ERROR", 0, [], 0, 0
                     )
                     self.signals.log.emit(f"[{done}/{pending_count}] {img.name} → 失败: {str(e)[:60]}")
+                    self._drain_fallback_notices()
                     continue
 
+                self._drain_fallback_notices()
                 if result is None:      # 取消后被跳过的任务
                     continue
 
@@ -226,13 +230,20 @@ class Classifier(QThread):
 
     def _classify_one(self, filepath: Path, prompt_text: str) -> tuple:
         """单张分类，返回 (category, confidence, keywords, raw, prompt_tokens, completion_tokens)"""
-        from app.vlm import classify_image, parse_response
+        from app.vlm import FAST_MODE_BODY, classify_image, parse_response
         raw, pt, ct = classify_image(
             self._service, self._api_key, self._model, filepath,
             prompt_text, self._use_original,
+            FAST_MODE_BODY if self._fast_mode else None,
         )
         category, confidence, keywords = parse_response(raw, self._categories)
         return category, confidence, keywords, raw, pt, ct
+
+    def _drain_fallback_notices(self):
+        """快速模式参数被服务端拒绝时，只提示一次（不静默失败）"""
+        from app.vlm import pop_fallback_notices
+        for msg in pop_fallback_notices():
+            self.signals.log.emit(f"提示：{msg}")
 
     def _resolve_category(self, category: str, confidence: float) -> str:
         """低置信度分流：低于阈值 → 待确认"""

@@ -52,30 +52,107 @@ def test_history_table_loads_runs(qapp, tmp_path):
                     "avg_confidence": 0.8, "confusion": {}, "errors": []})
     tab = EvalTab(store=store)
     assert tab._history_table.rowCount() == 1
-    assert tab._history_table.item(0, 3).text().startswith("55.0")
-    assert tab._history_table.item(0, 1).text() == "abcd1234"
+    assert tab._history_table.item(0, 5).text().startswith("55.0")
+    assert tab._history_table.item(0, 3).text() == "abcd1234"
 
 
-def test_render_record_populates_views(qapp, tmp_path):
-    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
-    record = {
-        "id": "20260909-130000", "timestamp": "2026-09-09 13:00:00",
+def _record(rid="20260909-130000", variant="现状", rnd=1, samples=None):
+    return {
+        "id": rid, "timestamp": "2026-09-09 13:00:00", "variant": variant, "round": rnd,
         "accuracy": 50.0, "correct": 1, "total": 2, "avg_confidence": 0.7,
         "elapsed_seconds": 10.0, "total_tokens": 500, "prompt_hash": "deadbeef",
         "confusion": {"科技": {"科技": 1, "日常": 1}},
-        "errors": [{"path": str(tmp_path / "missing.jpg"), "gt": "科技",
-                    "pred": "日常", "conf": 0.6}],
+        "samples": samples if samples is not None else [
+            {"path": "/d/科技/a.jpg", "gt": "科技", "pred": "科技", "conf": 0.9, "ok": True},
+            {"path": "/d/科技/b.jpg", "gt": "科技", "pred": "日常", "conf": 0.4, "ok": False},
+        ],
+        "errors": [{"path": "/d/科技/b.jpg", "gt": "科技", "pred": "日常", "conf": 0.4}],
     }
-    tab._on_finished(record)
+
+
+def test_render_batch_populates_views(qapp, tmp_path):
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    tab._on_finished([_record()])
     assert "50.0%" in tab._metrics_label.text()
     assert tab._confusion_table.rowCount() == 1
     assert tab._error_list.count() == 1
     assert tab._history_table.rowCount() == 1
     assert tab._start_btn.isEnabled() is True
+    assert tab._threshold_table.rowCount() > 0
+
+
+def test_multi_round_batch_renders_stability(qapp, tmp_path):
+    """多轮批次要在界面上给出均值/极差与一致率，而不是只显示最后一轮"""
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    r1 = _record("b-r1", rnd=1)
+    r2 = _record("b-r2", rnd=2)
+    r2["samples"][1] = {"path": "/d/科技/b.jpg", "gt": "科技", "pred": "科技",
+                        "conf": 0.8, "ok": True}
+    r2["accuracy"] = 100.0
+    tab._on_finished([r1, r2])
+    assert "2 轮均值" in tab._metrics_label.text()
+    assert "极差" in tab._metrics_label.text()
+    assert "跨轮一致" in tab._summary_label.text()
+    assert tab._history_table.rowCount() == 2
+
+
+def test_variant_combo_switches_view(qapp, tmp_path):
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    a = _record("b-A-r1", variant="A")
+    b = _record("b-B-r1", variant="B")
+    b["accuracy"] = 100.0
+    tab._on_finished([a, b])
+    assert tab._variant_combo.count() == 2
+    assert tab._variant_combo.currentText() == "A"
+    tab._variant_combo.setCurrentIndex(1)
+    assert "100.0%" in tab._metrics_label.text()
+
+
+def test_two_variants_show_paired_comparison(qapp, tmp_path):
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    a = _record("b-A-r1", variant="A")
+    b = _record("b-B-r1", variant="B")
+    b["samples"] = [
+        {"path": "/d/科技/a.jpg", "gt": "科技", "pred": "科技", "conf": 0.9, "ok": True},
+        {"path": "/d/科技/b.jpg", "gt": "科技", "pred": "科技", "conf": 0.9, "ok": True},
+    ]
+    b["accuracy"] = 100.0
+    tab._on_finished([a, b])
+    assert "配对比较" in tab._summary_label.text()
+
+
+def test_plan_label_counts_requests(qapp, tmp_path):
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    tab._rounds_spin.setValue(3)
+    tab._update_plan_label()
+    assert "1 个变体 × 3 轮" in tab._plan_label.text()
+    tab._ab_check.setChecked(True)
+    assert "2 个变体 × 3 轮" in tab._plan_label.text()
+    tab._fast_check.setChecked(True)
+    assert "4 个变体 × 3 轮" in tab._plan_label.text()
+
+
+def test_build_variants_respects_toggles(qapp, tmp_path):
+    tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
+    tab.set_config("k", "m", ["科技"], "P1", 30, False, {"科技": "芯片"})
+    assert [v.name for v in tab.build_variants()] == ["现状"]
+
+    tab._ab_check.setChecked(True)
+    tab._prompt_edit_b.setPlainText("P2")
+    names = [v.name for v in tab.build_variants()]
+    assert names == ["A", "B"]
+    assert "P2" in tab.build_variants()[1].prompt_text
+
+    tab._fast_check.setChecked(True)
+    variants = tab.build_variants()
+    assert [v.name for v in variants] == ["A", "B", "A+快速", "B+快速"]
+    assert variants[2].extra_body == {"thinking": {"type": "disabled"}}
+    assert variants[3].extra_body == {"thinking": {"type": "disabled"}}
+    assert variants[0].prompt_text == variants[2].prompt_text
 
 
 def test_cancel_state_after_empty_record(qapp, tmp_path):
     tab = EvalTab(store=EvalStore(base_dir=tmp_path / "eval"))
-    tab._on_finished({})
+    tab._on_finished([])
     assert "未完成" in tab._metrics_label.text()
     assert tab._history_table.rowCount() == 0

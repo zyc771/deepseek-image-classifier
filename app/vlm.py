@@ -15,7 +15,56 @@ from app.providers import get_provider
 
 RETRY_TIMES = 3
 
+# 快速模式：关闭模型思考。实测输出 token 600→35、单张延迟 3.99s→0.90s（约 4.4 倍），
+# 在 60 张难图上未检出准确率差异（配对 14:17，p=0.72）——但样本量不足以证明等价，
+# 因此默认关闭，由用户自行权衡后开启。服务端若不支持该参数会自动降级。
+FAST_MODE_BODY = {"thinking": {"type": "disabled"}}
+
+# 服务端明确拒绝（参数不存在/不支持）的状态码
+_PARAM_REJECT_CODES = {400, 404, 422}
+
 _thread_local = threading.local()
+
+# 已判定「该模型不支持该参数」的集合，形如 {(模型名, 参数名)}。
+# 探测一次即可，后续图片不再重复发送注定失败的参数。
+_unsupported_params: set[tuple[str, str]] = set()
+_fallback_notices: list[str] = []
+_notice_lock = threading.Lock()
+
+
+def reset_extra_body_state():
+    """清空参数兼容性记忆与降级提示（测试与切换模型时使用）"""
+    with _notice_lock:
+        _unsupported_params.clear()
+        _fallback_notices.clear()
+
+
+def pop_fallback_notices() -> list[str]:
+    """取出并清空降级提示（供界面写日志用）"""
+    with _notice_lock:
+        out = list(_fallback_notices)
+        _fallback_notices.clear()
+    return out
+
+
+def supported_extra_body(model: str, extra_body: dict | None) -> dict:
+    """过滤掉该模型已被判定不支持的参数"""
+    if not extra_body:
+        return {}
+    return {k: v for k, v in extra_body.items() if (model, k) not in _unsupported_params}
+
+
+def _mark_unsupported(model: str, body: dict, code: int):
+    """记录参数不被支持，并生成一次降级提示"""
+    with _notice_lock:
+        fresh = [k for k in body if (model, k) not in _unsupported_params]
+        if not fresh:
+            return
+        for k in fresh:
+            _unsupported_params.add((model, k))
+        _fallback_notices.append(
+            f"模型 {model} 不支持参数 {', '.join(fresh)}（HTTP {code}），已自动降级为普通模式"
+        )
 
 
 def _session() -> requests.Session:
@@ -151,15 +200,31 @@ def encode_image(filepath: Path, use_original: bool) -> tuple[str, str]:
 
 
 def classify_image(service: str, api_key: str, model: str, filepath: Path,
-                   prompt_text: str, use_original: bool = False) -> tuple[str, int, int]:
+                   prompt_text: str, use_original: bool = False,
+                   extra_body: dict | None = None) -> tuple[str, int, int]:
     """单图调用。返回 (raw_response, prompt_tokens, completion_tokens)
 
     含 3 次重试；全部失败抛异常。
+    extra_body 为附加请求参数（如快速模式的 thinking 开关）；若服务端拒绝该参数，
+    会自动去掉它重试一次并记录降级提示，不影响本次结果。
     """
     ext, img_b64 = encode_image(filepath, use_original)
     data_url = f"data:image/{ext};base64,{img_b64}"
 
     for attempt in range(RETRY_TIMES):
+        payload = {
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": prompt_text},
+                ]
+            }]
+        }
+        active = supported_extra_body(model, extra_body)
+        payload.update(active)
+
         try:
             resp = _session().post(
                 get_provider(service)["endpoint"],
@@ -167,16 +232,7 @@ def classify_image(service: str, api_key: str, model: str, filepath: Path,
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": model,
-                    "messages": [{
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": data_url}},
-                            {"type": "text", "text": prompt_text},
-                        ]
-                    }]
-                },
+                json=payload,
                 timeout=60,
             )
             if resp.status_code == 200:
@@ -184,6 +240,10 @@ def classify_image(service: str, api_key: str, model: str, filepath: Path,
                 raw = data["choices"][0]["message"]["content"].strip()
                 usage = data.get("usage", {})
                 return raw, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+            if active and resp.status_code in _PARAM_REJECT_CODES:
+                # 参数不被支持：记住并立刻用「去掉参数」的请求重试（不空等）
+                _mark_unsupported(model, active, resp.status_code)
+                continue
         except Exception:
             pass
         if attempt < RETRY_TIMES - 1:

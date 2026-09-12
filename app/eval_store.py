@@ -31,6 +31,11 @@ class EvalStore:
 
     def save_eval_set(self, name: str, items: list[str]) -> Path:
         p = self._set_path(name)
+        if p.exists():                      # 覆盖旧评估集前自动留一份备份
+            try:
+                p.replace(p.with_suffix(".bak.json"))
+            except OSError:
+                pass
         p.write_text(json.dumps(list(items), ensure_ascii=False, indent=2), encoding="utf-8")
         return p
 
@@ -72,3 +77,17 @@ class EvalStore:
         except Exception:
             return None
         return data if isinstance(data, dict) else None
+
+    # ── 批次（多轮 / 多变体一次运行产生的全部记录）──
+    def load_batches(self) -> dict[str, list[dict]]:
+        """按 batch_id 分组；没有 batch_id 的旧记录以自身 id 单独成组"""
+        groups: dict[str, list[dict]] = {}
+        for r in self.load_runs():
+            key = r.get("batch_id") or r.get("id") or "unknown"
+            groups.setdefault(key, []).append(r)
+        for key, items in groups.items():
+            items.sort(key=lambda x: (x.get("round", 1), x.get("batch_seq", 0)))
+        return dict(sorted(groups.items(), reverse=True))
+
+    def save_batch(self, records: list[dict]) -> list[Path]:
+        return [self.save_run(r) for r in records or [] if r]

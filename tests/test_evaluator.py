@@ -111,7 +111,8 @@ class TestConcurrentEvaluation:
         root = _make_dataset(tmp_path)  # 科技3 + 日常2
         calls = []
 
-        def fake_classify(service, api_key, model, path, prompt_text, use_original=False):
+        def fake_classify(service, api_key, model, path, prompt_text,
+                          use_original=False, extra_body=None):
             calls.append(Path(path).name)
             _time.sleep(0.05)
             return '{"category": "科技", "confidence": 0.9, "keywords": []}', 10, 5
@@ -150,6 +151,95 @@ class TestConcurrentEvaluation:
         assert records == [{}]
 
 
+class TestClassifySamples:
+    """并发核心：被 Evaluator（单轮）与 BatchEvaluator（多轮/多变体）共用"""
+
+    def _samples(self, tmp_path):
+        root = _make_dataset(tmp_path)
+        return [(cat, f) for cat in ("科技", "日常")
+                for f in sorted((root / cat).glob("*.jpg"))]
+
+    def _cfg(self, **over):
+        base = dict(service="deepseek", api_key="k", model="m", prompt_text="p",
+                    categories=["科技", "日常"], rpm=600, concurrency=3)
+        base.update(over)
+        return ev.RoundConfig(**base)
+
+    def test_returns_results_and_token_sum(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            ev, "classify_image",
+            lambda *a, **kw: ('{"category": "科技", "confidence": 0.9}', 10, 5),
+        )
+        cfg = self._cfg()
+        results, tokens = ev.classify_samples(self._samples(tmp_path), cfg)
+        assert len(results) == 5
+        assert tokens == 75                       # 5 × (10 + 5)
+        assert results[0][0] in ("科技", "日常")   # (gt, pred, conf, path)
+
+    def test_progress_callback_fires_per_sample(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            ev, "classify_image",
+            lambda *a, **kw: ('{"category": "科技", "confidence": 0.9}', 1, 1),
+        )
+        seen = []
+        cfg = self._cfg(concurrency=2)
+        ev.classify_samples(self._samples(tmp_path), cfg,
+                            on_progress=lambda *a: seen.append(a))
+        assert len(seen) == 5
+
+    def test_cancel_stops_submitting(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake(*a, **kw):
+            calls.append(1)
+            return '{"category": "科技", "confidence": 0.9}', 1, 1
+
+        monkeypatch.setattr(ev, "classify_image", fake)
+        cfg = self._cfg(concurrency=1)
+        results, _ = ev.classify_samples(self._samples(tmp_path), cfg,
+                                        should_cancel=lambda: True)
+        assert calls == []
+        assert results == []
+
+    def test_api_failure_recorded_as_error(self, tmp_path, monkeypatch):
+        def boom(*a, **kw):
+            raise RuntimeError("网络炸了")
+
+        monkeypatch.setattr(ev, "classify_image", boom)
+        logs = []
+        cfg = self._cfg(concurrency=2)
+        results, tokens = ev.classify_samples(self._samples(tmp_path), cfg,
+                                             on_log=logs.append)
+        assert all(r[1] == "ERROR" for r in results)
+        assert tokens == 0
+        assert any("网络炸了" in m for m in logs)
+
+    def test_extra_body_forwarded_to_api(self, tmp_path, monkeypatch):
+        """快速模式参数必须一路传到 classify_image"""
+        captured = {}
+
+        def fake(service, api_key, model, path, prompt, use_original=False, extra_body=None):
+            captured["extra_body"] = extra_body
+            return '{"category": "科技", "confidence": 0.9}', 1, 1
+
+        monkeypatch.setattr(ev, "classify_image", fake)
+        cfg = self._cfg(concurrency=1,
+                        extra_body={"thinking": {"type": "disabled"}})
+        ev.classify_samples(self._samples(tmp_path), cfg)
+        assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    def test_order_matches_sample_order(self, tmp_path, monkeypatch):
+        """结果顺序应与输入样本一致（便于跨轮配对比较）"""
+        monkeypatch.setattr(
+            ev, "classify_image",
+            lambda *a, **kw: ('{"category": "科技", "confidence": 0.9}', 1, 1),
+        )
+        samples = self._samples(tmp_path)
+        cfg = self._cfg(concurrency=3)
+        results, _ = ev.classify_samples(samples, cfg)
+        assert [r[3] for r in results] == [str(p) for _, p in samples]
+
+
 class TestBuildRecord:
     def test_statistics(self):
         rec = ev.build_record(
@@ -179,6 +269,37 @@ class TestBuildRecord:
         )
         assert rec["accuracy"] == 0.0
         assert rec["confusion"]["科技"]["ERROR"] == 1
+
+    def test_records_all_samples_with_confidence(self):
+        """阈值曲线需要全部样本的置信度，而不只是错误的那些"""
+        rec = ev.build_record(
+            results=[("科技", "科技", 0.93, "/d/科技/a.jpg"),
+                     ("科技", "日常", 0.88, "/d/科技/b.jpg"),
+                     ("日常", "日常", 0.41, "/d/日常/c.jpg")],
+            prompt_text="p", dataset_root="d", sample_size=3, elapsed=1.0,
+            total_tokens=0, use_original=False,
+        )
+        assert len(rec["samples"]) == 3
+        assert rec["samples"][0] == {"path": "/d/科技/a.jpg", "gt": "科技",
+                                     "pred": "科技", "conf": 0.93, "ok": True}
+        assert rec["samples"][1]["ok"] is False
+        assert rec["samples"][2]["conf"] == 0.41
+        assert [s["path"] for s in rec["samples"]] == [r[3] for r in
+                                                      [("科技", "科技", 0.93, "/d/科技/a.jpg"),
+                                                       ("科技", "日常", 0.88, "/d/科技/b.jpg"),
+                                                       ("日常", "日常", 0.41, "/d/日常/c.jpg")]]
+
+    def test_samples_feed_threshold_curve(self):
+        """端到端：build_record 的产物必须能直接喂给 eval_stats"""
+        from app import eval_stats as st
+        rec = ev.build_record(
+            results=[("科技", "科技", 0.93, "/a.jpg"), ("科技", "日常", 0.31, "/b.jpg")],
+            prompt_text="p", dataset_root="d", sample_size=2, elapsed=1.0,
+            total_tokens=0, use_original=False,
+        )
+        pick = st.best_threshold([rec], max_correct_block_rate=10.0)
+        assert pick["threshold"] is not None
+        assert pick["blocked_errors"] == 1 and pick["blocked_correct"] == 0
 
     def test_empty_results(self):
         rec = ev.build_record([], "p", "d", 0, 0.0, 0, False)
